@@ -563,12 +563,15 @@
   </main>
 
   <script>
-    (function () {
-      const svg = document.getElementById('heart-svg');
+    document.addEventListener('DOMContentLoaded', function () {
+      const svg = document.querySelector('svg');
       const toolbar = document.querySelector('.toggles');
-      if (!svg || !toolbar) return;
+      if (!svg || !toolbar) {
+        if (toolbar) toolbar.textContent = 'No SVG found on this page.';
+        return;
+      }
 
-      // Find all elements whose id starts with "Label_"
+      // Get all elements with id starting "Label_"
       const labelEls = Array.from(svg.querySelectorAll('[id^="Label_"]'));
       if (!labelEls.length) {
         toolbar.textContent = 'No Label_* groups found in this SVG.';
@@ -611,14 +614,12 @@
       });
 
       allButton.addEventListener('click', () => {
-        const targets = labelEls;
-        const anyVisible = targets.some(el => !el.classList.contains('is-hidden'));
-        targets.forEach(el => el.classList.toggle('is-hidden', anyVisible));
+        const anyVisible = labelEls.some(el => !el.classList.contains('is-hidden'));
+        labelEls.forEach(el => el.classList.toggle('is-hidden', anyVisible));
         buttons.forEach(b => b.setAttribute('aria-pressed', anyVisible ? 'false' : 'true'));
         allButton.setAttribute('aria-pressed', anyVisible ? 'false' : 'true');
       });
-    })();
+    });
   </script>
 </body>
 </html>
-
