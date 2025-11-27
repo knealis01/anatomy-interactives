@@ -3,14 +3,13 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Heart – Show/Hide Labels</title>
+  <title>Heart – Show/Hide Labels (Auto IDs)</title>
   <style>
     body {
       font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
       margin: 1.5rem;
       background: #ffffff;
     }
-
     .diagram-wrap {
       border: 1px solid #ccc;
       padding: 1rem;
@@ -19,14 +18,12 @@
       max-width: 900px;
       margin: 0 auto;
     }
-
     .toggles {
       display: flex;
       flex-wrap: wrap;
       gap: .5rem;
       margin-bottom: 1rem;
     }
-
     .toggles button {
       padding: .4rem .6rem;
       border-radius: .4rem;
@@ -34,32 +31,14 @@
       background: #fff;
       cursor: pointer;
     }
-
     .toggles button[aria-pressed="true"] {
       background: #e8e8e8;
     }
-
     svg {
       width: 100%;
       height: auto;
       display: block;
     }
-
-    .label-bg {
-      fill: white;
-      stroke: #000;
-      stroke-width: 1;
-    }
-
-    .label {
-      font-family: system-ui, sans-serif;
-      font-weight: 600;
-    }
-
-    .atrium { fill:#cfe8ff; }
-    .ventricular { fill:#ffd6cf; }
-    .valve { fill:#e6e6ff; }
-
     .is-hidden { display: none; }
   </style>
 </head>
@@ -67,16 +46,12 @@
   <main class="diagram-wrap">
     <h1 style="font-size:1.25rem;margin-top:0;">Heart – Show/Hide Labels</h1>
 
-    <div class="toggles" role="toolbar" aria-label="Label toggles">
-      <button type="button" data-target="Label_Atria" aria-controls="Label_Atria" aria-pressed="true">Atria</button>
-      <button type="button" data-target="Label_Ventricles" aria-controls="Label_Ventricles" aria-pressed="true">Ventricles</button>
-      <button type="button" data-target="Label_Valves" aria-controls="Label_Valves" aria-pressed="true">Valves</button>
-      <button type="button" id="toggle-all" aria-pressed="false">Toggle All</button>
-    </div>
+    <!-- Buttons will be auto-generated here -->
+    <div class="toggles" role="toolbar" aria-label="Label toggles"></div>
 
-    <!-- You can replace this SVG with your exported Illustrator SVG.
-         Just keep the label group IDs: Label_Atria, Label_Ventricles, Label_Valves -->
-    <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 358 224">
+    <!-- 🔻 REPLACE THIS SVG WITH YOURS (keep id="Label_..." on label groups) -->
+    <!-- START SVG -->
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 358 224">
   <defs>
     <style>
       .cls-1 {
@@ -583,15 +558,48 @@
     </g>
   </g>
 </svg>
+    <!-- END SVG -->
+
   </main>
 
   <script>
     (function () {
-      const buttons = Array.from(document.querySelectorAll('.toggles button[data-target]'));
-      const allButton = document.getElementById('toggle-all');
+      const svg = document.getElementById('heart-svg');
+      const toolbar = document.querySelector('.toggles');
+      if (!svg || !toolbar) return;
+
+      // Find all elements whose id starts with "Label_"
+      const labelEls = Array.from(svg.querySelectorAll('[id^="Label_"]'));
+      if (!labelEls.length) {
+        toolbar.textContent = 'No Label_* groups found in this SVG.';
+        return;
+      }
+
+      const buttons = [];
+
+      labelEls.forEach(el => {
+        const id = el.id;
+        const name = id.replace(/^Label_/, '').replace(/_/g, ' ');
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.dataset.target = id;
+        btn.setAttribute('aria-controls', id);
+        btn.setAttribute('aria-pressed', 'true');
+        btn.textContent = name;
+        toolbar.appendChild(btn);
+        buttons.push(btn);
+      });
+
+      // Add "Toggle All"
+      const allButton = document.createElement('button');
+      allButton.type = 'button';
+      allButton.id = 'toggle-all';
+      allButton.textContent = 'Toggle All';
+      allButton.setAttribute('aria-pressed', 'false');
+      toolbar.appendChild(allButton);
 
       function toggle(id) {
-        const el = document.getElementById(id);
+        const el = svg.querySelector('#' + CSS.escape(id));
         if (!el) return;
         const hidden = el.classList.toggle('is-hidden');
         const btn = buttons.find(b => b.dataset.target === id);
@@ -603,7 +611,7 @@
       });
 
       allButton.addEventListener('click', () => {
-        const targets = buttons.map(b => document.getElementById(b.dataset.target)).filter(Boolean);
+        const targets = labelEls;
         const anyVisible = targets.some(el => !el.classList.contains('is-hidden'));
         targets.forEach(el => el.classList.toggle('is-hidden', anyVisible));
         buttons.forEach(b => b.setAttribute('aria-pressed', anyVisible ? 'false' : 'true'));
@@ -613,3 +621,4 @@
   </script>
 </body>
 </html>
+
