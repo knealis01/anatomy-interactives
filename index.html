@@ -563,63 +563,71 @@
   </main>
 
   <script>
-    document.addEventListener('DOMContentLoaded', function () {
-      const svg = document.querySelector('svg');
-      const toolbar = document.querySelector('.toggles');
-      if (!svg || !toolbar) {
-        if (toolbar) toolbar.textContent = 'No SVG found on this page.';
-        return;
-      }
+  document.addEventListener('DOMContentLoaded', function () {
+    const svg = document.querySelector('svg');
+    const toolbar = document.querySelector('.toggles');
+    if (!svg || !toolbar) {
+      if (toolbar) toolbar.textContent = 'No SVG found on this page.';
+      return;
+    }
 
-      // Get all elements with id starting "Label_"
-      const labelEls = Array.from(svg.querySelectorAll('[id^="Label_"]'));
-      if (!labelEls.length) {
-        toolbar.textContent = 'No Label_* groups found in this SVG.';
-        return;
-      }
+    // Get all elements with id starting "Label_"
+    const labelEls = Array.from(svg.querySelectorAll('[id^="Label_"]'));
+    if (!labelEls.length) {
+      toolbar.textContent = 'No Label_* groups found in this SVG.';
+      return;
+    }
 
-      const buttons = [];
+    // --- NEW: randomize label order (Fisher–Yates shuffle) ---
+    const shuffledLabels = [...labelEls];
+    for (let i = shuffledLabels.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffledLabels[i], shuffledLabels[j]] = [shuffledLabels[j], shuffledLabels[i]];
+    }
 
-      labelEls.forEach(el => {
-        const id = el.id;
-        const name = id.replace(/^Label_/, '').replace(/_/g, ' ');
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.dataset.target = id;
-        btn.setAttribute('aria-controls', id);
-        btn.setAttribute('aria-pressed', 'true');
-        btn.textContent = name;
-        toolbar.appendChild(btn);
-        buttons.push(btn);
-      });
+    const buttons = [];
 
-      // Add "Toggle All"
-      const allButton = document.createElement('button');
-      allButton.type = 'button';
-      allButton.id = 'toggle-all';
-      allButton.textContent = 'Toggle All';
-      allButton.setAttribute('aria-pressed', 'false');
-      toolbar.appendChild(allButton);
-
-      function toggle(id) {
-        const el = svg.querySelector('#' + CSS.escape(id));
-        if (!el) return;
-        const hidden = el.classList.toggle('is-hidden');
-        const btn = buttons.find(b => b.dataset.target === id);
-        if (btn) btn.setAttribute('aria-pressed', hidden ? 'false' : 'true');
-      }
-
-      buttons.forEach(btn => {
-        btn.addEventListener('click', () => toggle(btn.dataset.target));
-      });
-
-      allButton.addEventListener('click', () => {
-        const anyVisible = labelEls.some(el => !el.classList.contains('is-hidden'));
-        labelEls.forEach(el => el.classList.toggle('is-hidden', anyVisible));
-        buttons.forEach(b => b.setAttribute('aria-pressed', anyVisible ? 'false' : 'true'));
-        allButton.setAttribute('aria-pressed', anyVisible ? 'false' : 'true');
-      });
+    // Build buttons in randomized order
+    shuffledLabels.forEach(el => {
+      const id = el.id;
+      const name = id.replace(/^Label_/, '').replace(/_/g, ' ');
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.dataset.target = id;
+      btn.setAttribute('aria-controls', id);
+      btn.setAttribute('aria-pressed', 'true');
+      btn.textContent = name;
+      toolbar.appendChild(btn);
+      buttons.push(btn);
     });
-  </script>
+
+    // Add "Toggle All"
+    const allButton = document.createElement('button');
+    allButton.type = 'button';
+    allButton.id = 'toggle-all';
+    allButton.textContent = 'Toggle All';
+    allButton.setAttribute('aria-pressed', 'false');
+    toolbar.appendChild(allButton);
+
+    function toggle(id) {
+      const el = svg.querySelector('#' + CSS.escape(id));
+      if (!el) return;
+      const hidden = el.classList.toggle('is-hidden');
+      const btn = buttons.find(b => b.dataset.target === id);
+      if (btn) btn.setAttribute('aria-pressed', hidden ? 'false' : 'true');
+    }
+
+    buttons.forEach(btn => {
+      btn.addEventListener('click', () => toggle(btn.dataset.target));
+    });
+
+    allButton.addEventListener('click', () => {
+      const anyVisible = labelEls.some(el => !el.classList.contains('is-hidden'));
+      labelEls.forEach(el => el.classList.toggle('is-hidden', anyVisible));
+      buttons.forEach(b => b.setAttribute('aria-pressed', anyVisible ? 'false' : 'true'));
+      allButton.setAttribute('aria-pressed', anyVisible ? 'false' : 'true');
+    });
+  });
+</script>
 </body>
 </html>
