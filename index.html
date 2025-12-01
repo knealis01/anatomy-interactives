@@ -656,9 +656,31 @@
 
         // set text content (assumes a <text> element inside the group)
         const textNode = el.querySelector('text');
-        if (textNode && info.text) {
-          textNode.textContent = info.text;
-        }
+if (textNode && info.text) {
+  // Clear any existing tspans/text
+  while (textNode.firstChild) {
+    textNode.removeChild(textNode.firstChild);
+  }
+
+  // Split on newlines from the Sheet to create multiple tspans
+  const lines = String(info.text).split(/\r?\n/);
+  lines.forEach((line, index) => {
+    const tspan = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
+    tspan.textContent = line;
+
+    if (index === 0) {
+      // First line keeps current position
+      tspan.setAttribute('x', textNode.getAttribute('x') || '0');
+      tspan.setAttribute('y', textNode.getAttribute('y') || '0');
+    } else {
+      // Subsequent lines: same x, move down a bit
+      tspan.setAttribute('x', textNode.getAttribute('x') || '0');
+      tspan.setAttribute('dy', '1em'); // adjust line spacing if needed
+    }
+
+    textNode.appendChild(tspan);
+  });
+}
 
         // set a title/tooltip on the group if provided
         if (info.tooltip) {
