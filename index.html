@@ -3,13 +3,15 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Heart – Show/Hide Labels (Auto IDs)</title>
+  <title>Heart – Show/Hide Labels</title>
+
   <style>
     body {
       font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
       margin: 1.5rem;
       background: #ffffff;
     }
+
     .diagram-wrap {
       border: 1px solid #ccc;
       padding: 1rem;
@@ -18,66 +20,81 @@
       max-width: 900px;
       margin: 0 auto;
     }
+
+    h1 {
+      font-size: 1.25rem;
+      margin-top: 0;
+    }
+
+    #label-instructions {
+      font-size: 0.95rem;
+      color: #374151;
+      margin-bottom: 0.75rem;
+    }
+
     .toggles {
       display: flex;
       flex-wrap: wrap;
-      gap: .5rem;
+      gap: 0.5rem;
       margin-bottom: 1rem;
     }
+
     .toggles button {
-      padding: .4rem .6rem;
-      border-radius: .4rem;
+      padding: 0.4rem 0.6rem;
+      border-radius: 0.4rem;
       border: 1px solid #bbb;
-      background: #fff;
+      background: #ffffff;
       cursor: pointer;
+      font-size: 0.9rem;
     }
+
     .toggles button[aria-pressed="true"] {
       background: #e8e8e8;
+      font-weight: 600;
     }
+
+    .toggles button:focus-visible {
+      outline: 2px solid #2563eb;
+      outline-offset: 2px;
+    }
+
     svg {
       width: 100%;
       height: auto;
       display: block;
     }
-    .is-hidden { display: none; }
-    .modes {
-  display: flex;
-  gap: .5rem;
-  margin-bottom: .75rem;
-}
 
-.mode-button {
-  padding: .35rem .7rem;
-  border-radius: .4rem;
-  border: 1px solid #bbb;
-  background: #f8f8f8;
-  cursor: pointer;
-  font-size: .9rem;
-}
+    .is-hidden {
+      display: none;
+    }
 
-.mode-button[aria-pressed="true"] {
-  background: #dbeafe;
-  border-color: #93c5fd;
-}
+    /* Optional demo styles; your SVG can override as needed */
+    .label-bg {
+      fill: white;
+      stroke: #000;
+      stroke-width: 1;
+    }
+
+    .label {
+      font-family: system-ui, sans-serif;
+      font-weight: 600;
+    }
   </style>
 </head>
 <body>
- <main class="diagram-wrap">
-  <h1 style="font-size:1.25rem;margin-top:0;">Heart – Show/Hide Labels</h1>
+  <main class="diagram-wrap">
+    <h1>Heart – Show/Hide Labels</h1>
 
-  <!-- Mode selector -->
-  <div class="modes" role="radiogroup" aria-label="Mode">
-    <button type="button" class="mode-button" data-mode="study" aria-pressed="true">
-      Study mode
-    </button>
-    <button type="button" class="mode-button" data-mode="quiz" aria-pressed="false">
-      Quiz mode
-    </button>
-  </div>
+    <p id="label-instructions">
+      Use the buttons below to show or hide labels on the diagram. Each button controls
+      a label with the same name inside the heart illustration.
+    </p>
 
-  <!-- Buttons will be auto-generated here -->
-  <div class="toggles" role="toolbar" aria-label="Label toggles"></div>
-
+    <!-- Buttons will be auto-generated here -->
+    <div class="toggles"
+         role="toolbar"
+         aria-label="Heart label toggles"
+         aria-describedby="label-instructions"></div>
 
     <!-- 🔻 REPLACE THIS SVG WITH YOURS (keep id="Label_..." on label groups) -->
     <!-- START SVG -->
@@ -590,119 +607,77 @@
 </svg>
     <!-- END SVG -->
 
+
   </main>
 
-<script>
-  document.addEventListener('DOMContentLoaded', function () {
-    const svg = document.querySelector('svg');
-    const toolbar = document.querySelector('.toggles');
-    const modeButtons = Array.from(document.querySelectorAll('.mode-button'));
-    if (!svg || !toolbar) {
-      if (toolbar) toolbar.textContent = 'No SVG found on this page.';
-      return;
-    }
-
-    // All label groups with id starting "Label_"
-    const labelEls = Array.from(svg.querySelectorAll('[id^="Label_"]'));
-    if (!labelEls.length) {
-      toolbar.textContent = 'No Label_* groups found in this SVG.';
-      return;
-    }
-
-    // Randomize label order for buttons (Fisher–Yates)
-    const shuffledLabels = [...labelEls];
-    for (let i = shuffledLabels.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [shuffledLabels[i], shuffledLabels[j]] = [shuffledLabels[j], shuffledLabels[i]];
-    }
-
-    let currentMode = 'study'; // 'study' or 'quiz'
-    const buttons = [];
-
-    // Build label buttons
-    shuffledLabels.forEach(el => {
-      const id = el.id;
-      const name = id.replace(/^Label_/, '').replace(/_/g, ' ');
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.dataset.target = id;
-      btn.setAttribute('aria-controls', id);
-      btn.setAttribute('aria-pressed', 'true');
-      btn.textContent = name;
-      toolbar.appendChild(btn);
-      buttons.push(btn);
-    });
-
-    // Add "Toggle All"
-    const allButton = document.createElement('button');
-    allButton.type = 'button';
-    allButton.id = 'toggle-all';
-    allButton.textContent = 'Toggle All';
-    allButton.setAttribute('aria-pressed', 'false');
-    toolbar.appendChild(allButton);
-
-    function setMode(mode) {
-      currentMode = mode;
-
-      // Update mode button visuals
-      modeButtons.forEach(b => {
-        const isActive = b.dataset.mode === mode;
-        b.setAttribute('aria-pressed', String(isActive));
-      });
-
-      if (mode === 'study') {
-        // Show all labels
-        labelEls.forEach(el => el.classList.remove('is-hidden'));
-        buttons.forEach(b => b.setAttribute('aria-pressed', 'true'));
-        allButton.setAttribute('aria-pressed', 'false');
-      } else if (mode === 'quiz') {
-        // Start with all labels hidden
-        labelEls.forEach(el => el.classList.add('is-hidden'));
-        buttons.forEach(b => b.setAttribute('aria-pressed', 'false'));
-        allButton.setAttribute('aria-pressed', 'false');
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      const svg = document.querySelector('svg');
+      const toolbar = document.querySelector('.toggles');
+      if (!svg || !toolbar) {
+        if (toolbar) toolbar.textContent = 'No SVG found on this page.';
+        return;
       }
-    }
 
-    function toggle(id) {
-      const el = svg.querySelector('#' + CSS.escape(id));
-      if (!el) return;
+      // Get all elements whose id starts with "Label_"
+      const labelEls = Array.from(svg.querySelectorAll('[id^="Label_"]'));
+      if (!labelEls.length) {
+        toolbar.textContent = 'No Label_* groups found in this SVG.';
+        return;
+      }
 
-      const hidden = el.classList.toggle('is-hidden');
-      const btn = buttons.find(b => b.dataset.target === id);
-      if (btn) btn.setAttribute('aria-pressed', hidden ? 'false' : 'true');
-    }
+      // Randomize label order for buttons (Fisher–Yates shuffle)
+      const shuffledLabels = [...labelEls];
+      for (let i = shuffledLabels.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffledLabels[i], shuffledLabels[j]] = [shuffledLabels[j], shuffledLabels[i]];
+      }
 
-    // Button behavior
-    buttons.forEach(btn => {
-      btn.addEventListener('click', () => {
-        // In both modes, clicking toggles that label on/off.
-        // In quiz mode, all labels start hidden; student reveals them as needed.
-        toggle(btn.dataset.target);
+      const buttons = [];
+
+      // Build buttons in randomized order
+      shuffledLabels.forEach(el => {
+        const id = el.id;
+        const name = id.replace(/^Label_/, '').replace(/_/g, ' ');
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.dataset.target = id;
+        btn.setAttribute('aria-controls', id);
+        btn.setAttribute('aria-pressed', 'true');
+        btn.textContent = name;
+        toolbar.appendChild(btn);
+        buttons.push(btn);
+      });
+
+      // Add "Toggle All"
+      const allButton = document.createElement('button');
+      allButton.type = 'button';
+      allButton.id = 'toggle-all';
+      allButton.textContent = 'Toggle All';
+      allButton.setAttribute('aria-pressed', 'false');
+      toolbar.appendChild(allButton);
+
+      function toggle(id) {
+        const el = svg.querySelector('#' + CSS.escape(id));
+        if (!el) return;
+        const hidden = el.classList.toggle('is-hidden');
+        const btn = buttons.find(b => b.dataset.target === id);
+        if (btn) btn.setAttribute('aria-pressed', hidden ? 'false' : 'true');
+      }
+
+      // Individual button behavior
+      buttons.forEach(btn => {
+        btn.addEventListener('click', () => toggle(btn.dataset.target));
+      });
+
+      // Toggle All behavior
+      allButton.addEventListener('click', () => {
+        const anyVisible = labelEls.some(el => !el.classList.contains('is-hidden'));
+        labelEls.forEach(el => el.classList.toggle('is-hidden', anyVisible));
+        buttons.forEach(b => b.setAttribute('aria-pressed', anyVisible ? 'false' : 'true'));
+        allButton.setAttribute('aria-pressed', anyVisible ? 'false' : 'true');
       });
     });
-
-    // Toggle All behavior
-    allButton.addEventListener('click', () => {
-      const anyVisible = labelEls.some(el => !el.classList.contains('is-hidden'));
-      labelEls.forEach(el => el.classList.toggle('is-hidden', anyVisible));
-      buttons.forEach(b => b.setAttribute('aria-pressed', anyVisible ? 'false' : 'true'));
-      allButton.setAttribute('aria-pressed', anyVisible ? 'false' : 'true');
-    });
-
-    // Mode button handlers
-    modeButtons.forEach(b => {
-      b.addEventListener('click', () => {
-        const mode = b.dataset.mode;
-        if (mode && mode !== currentMode) {
-          setMode(mode);
-        }
-      });
-    });
-
-    // Initialize in Study mode (labels visible)
-    setMode('study');
-  });
-</script>
-
+  </script>
 </body>
 </html>
