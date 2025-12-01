@@ -43,11 +43,22 @@
   </style>
 </head>
 <body>
-  <main class="diagram-wrap">
-    <h1 style="font-size:1.25rem;margin-top:0;">Heart – Show/Hide Labels</h1>
+ <main class="diagram-wrap">
+  <h1 style="font-size:1.25rem;margin-top:0;">Heart – Show/Hide Labels</h1>
 
-    <!-- Buttons will be auto-generated here -->
-    <div class="toggles" role="toolbar" aria-label="Label toggles"></div>
+  <!-- Mode selector -->
+  <div class="modes" role="radiogroup" aria-label="Mode">
+    <button type="button" class="mode-button" data-mode="study" aria-pressed="true">
+      Study mode
+    </button>
+    <button type="button" class="mode-button" data-mode="quiz" aria-pressed="false">
+      Quiz mode
+    </button>
+  </div>
+
+  <!-- Buttons will be auto-generated here -->
+  <div class="toggles" role="toolbar" aria-label="Label toggles"></div>
+
 
     <!-- 🔻 REPLACE THIS SVG WITH YOURS (keep id="Label_..." on label groups) -->
     <!-- START SVG -->
