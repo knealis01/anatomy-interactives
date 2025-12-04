@@ -3,14 +3,30 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <!-- PERFORMANCE HINTS -->
+  <link rel="preconnect" href="https://script.google.com">
+  <link rel="dns-prefetch" href="https://script.google.com">
   <title>Heart – Show/Hide Labels (Sheet-driven)</title>
 
   <style>
     body {
+      <div id="sr-status" aria-live="polite" class="sr-only"></div>
       font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
       margin: 1.5rem;
       background: #ffffff;
     }
+
+    .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0,0,0,0);
+    border: 0;
+    }
+
 
     .diagram-wrap {
       border: 1px solid #ccc;
@@ -78,6 +94,19 @@
       font-family: system-ui, sans-serif;
       font-weight: 600;
     }
+
+    #loading-message {
+    font-size: 0.9rem;
+    color: #6b7280; /* subtle gray */
+    animation: pulse 1.2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+    0%   { opacity: 0.4; }
+    50%  { opacity: 1; }
+    100% { opacity: 0.4; }
+    }
+
   </style>
 </head>
 <body>
@@ -93,7 +122,9 @@
     <div class="toggles"
          role="toolbar"
          aria-label="Heart label toggles"
-         aria-describedby="label-instructions"></div>
+         aria-describedby="label-instructions">
+        <span id="loading-message">Loading labels…</span>
+         </div>
 
     <!-- 🔻 REPLACE THIS SVG WITH YOURS (keep id="Label_..." on label groups) -->
     <!-- START SVG -->
@@ -612,6 +643,7 @@
     document.addEventListener('DOMContentLoaded', async function () {
       const svg = document.querySelector('svg');
       const toolbar = document.querySelector('.toggles');
+      const loadingMsg = document.getElementById('loading-message');
       if (!svg || !toolbar) {
         if (toolbar) toolbar.textContent = 'No SVG found on this page.';
         return;
@@ -696,6 +728,11 @@ if (textNode && info.text) {
         }
       });
 
+        // Remove loading message once labels and meta are ready
+        if (loadingMsg) {
+          loadingMsg.remove();
+        }
+  
       // 4) Randomize label order for buttons (Fisher–Yates)
       const shuffledLabels = [...labelEls];
       for (let i = shuffledLabels.length - 1; i > 0; i--) {
