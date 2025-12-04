@@ -639,159 +639,186 @@
 
   </main>
 
-  <script>
-    document.addEventListener('DOMContentLoaded', async function () {
-      const svg = document.querySelector('svg');
-      const toolbar = document.querySelector('.toggles');
-      const loadingMsg = document.getElementById('loading-message');
-      if (!svg || !toolbar) {
-        if (toolbar) toolbar.textContent = 'No SVG found on this page.';
-        return;
-      }
+ <script>
+  document.addEventListener('DOMContentLoaded', async function () {
+    const svg = document.querySelector('svg');
+    const toolbar = document.querySelector('.toggles');
+    const loadingMsg = document.getElementById('loading-message');
+    const srStatus = document.getElementById('sr-status');
 
-      // --- CONFIG: your Apps Script URL + language ---
-      const SHEET_API_URL = 'https://script.google.com/a/macros/macmillan.com/s/AKfycbx9Q497bGL6gSw4LWa2EoQ4GtDNfEnCwVsJvyxQggI2VAFQPU0FBR4LOFpfF4pm2mEE/exec'; // <-- paste your URL
-      const LANG = 'en'; // change to 'es' later if needed
-
-      // 1) Collect label groups from SVG
-      const labelEls = Array.from(svg.querySelectorAll('[id^="Label_"]'));
-      if (!labelEls.length) {
-        toolbar.textContent = 'No Label_* groups found in this SVG.';
-        return;
-      }
-
-      // 2) Fetch label data from Google Sheets
-      let labelData = [];
-      try {
-        const res = await fetch(
-          SHEET_API_URL + '?lang=' + encodeURIComponent(LANG),
-          { cache: 'no-store' }
-        );
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        labelData = await res.json();
-      } catch (err) {
-        console.error('Failed to load label data from Sheet:', err);
-        // Fallback: proceed with SVG labels as-is
-        labelData = [];
-      }
-
-      // Index data by id for quick lookup
-      const dataById = {};
-      labelData.forEach(item => {
-        if (item.id) dataById[item.id] = item;
-      });
-
-      // 3) Apply text / tooltip / initial visibility from Sheet
-      labelEls.forEach(el => {
-        const info = dataById[el.id];
-        if (!info) return; // if no row, leave SVG as-is
-
-        // set text content (assumes a <text> element inside the group)
-        const textNode = el.querySelector('text');
-if (textNode && info.text) {
-  // Clear any existing tspans/text
-  while (textNode.firstChild) {
-    textNode.removeChild(textNode.firstChild);
-  }
-
-  // Split on newlines from the Sheet to create multiple tspans
-  const lines = String(info.text).split(/\r?\n/);
-  lines.forEach((line, index) => {
-    const tspan = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
-    tspan.textContent = line;
-
-    if (index === 0) {
-      // First line keeps current position
-      tspan.setAttribute('x', textNode.getAttribute('x') || '0');
-      tspan.setAttribute('y', textNode.getAttribute('y') || '0');
-    } else {
-      // Subsequent lines: same x, move down a bit
-      tspan.setAttribute('x', textNode.getAttribute('x') || '0');
-      tspan.setAttribute('dy', '1em'); // adjust line spacing if needed
+    if (!svg || !toolbar) {
+      if (toolbar) toolbar.textContent = 'No SVG found on this page.';
+      return;
     }
 
-    textNode.appendChild(tspan);
-  });
-}
+    // --- CONFIG: your Apps Script URL + language + diagram id ---
+    const SHEET_API_URL = 'YOUR_SHEET_WEB_APP_URL_HERE'; // <-- paste your URL
+    const LANG = 'en';
+    const DIAGRAM_ID = 'heart';
 
-        // set a title/tooltip on the group if provided
-        if (info.tooltip) {
-          el.setAttribute('aria-label', info.tooltip);
-          el.setAttribute('title', info.tooltip);
-        }
+    // 1) Collect label groups from SVG
+    const labelEls = Array.from(svg.querySelectorAll('[id^="Label_"]'));
+    if (!labelEls.length) {
+      toolbar.textContent = 'No Label_* groups found in this SVG.';
+      return;
+    }
 
-        // set initial visibility
-        if (info.visible === false) {
-          el.classList.add('is-hidden');
-        } else {
-          el.classList.remove('is-hidden');
-        }
-      });
+    // 2) Fetch labels + meta from Google Sheets
+    let labelsPayload = { meta: { title: '', desc: '' }, labels: [] };
+    try {
+      const url = `${SHEET_API_URL}?lang=${encodeURIComponent(LANG)}&diagram=${encodeURIComponent(DIAGRAM_ID)}`;
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      labelsPayload = await res.json();
+    } catch (err) {
+      console.error('Failed to load label data from Sheet:', err);
+      // If fetch fails, we leave labelsPayload as the default
+    }
 
-        // Remove loading message once labels and meta are ready
-        if (loadingMsg) {
-          loadingMsg.remove();
-        }
-  
-      // 4) Randomize label order for buttons (Fisher–Yates)
-      const shuffledLabels = [...labelEls];
-      for (let i = shuffledLabels.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [shuffledLabels[i], shuffledLabels[j]] = [shuffledLabels[j], shuffledLabels[i]];
-      }
+    const meta = labelsPayload.meta || { title: '', desc: '' };
+    const labelData = Array.isArray(labelsPayload.labels) ? labelsPayload.labels : [];
 
-      const buttons = [];
+    // 3) Apply meta: role="img", title/desc, aria-labelledby
+    svg.setAttribute('role', 'img');
 
-      // 5) Build buttons in randomized order
-      shuffledLabels.forEach(el => {
-        const id = el.id;
-        const info = dataById[id];
-        const fallbackName = id.replace(/^Label_/, '').replace(/_/g, ' ');
-        const name = info && info.text ? info.text : fallbackName;
+    // Ensure <title> and <desc> exist
+    let titleEl = svg.querySelector('title');
+    let descEl  = svg.querySelector('desc');
 
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.dataset.target = id;
-        btn.setAttribute('aria-controls', id);
+    if (!titleEl) {
+      titleEl = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+      titleEl.id = 'diagram-title';
+      svg.insertBefore(titleEl, svg.firstChild);
+    } else if (!titleEl.id) {
+      titleEl.id = 'diagram-title';
+    }
 
-        // pressed state = visible state
-        const isHidden = el.classList.contains('is-hidden');
-        btn.setAttribute('aria-pressed', isHidden ? 'false' : 'true');
-        btn.textContent = name;
+    if (!descEl) {
+      descEl = document.createElementNS('http://www.w3.org/2000/svg', 'desc');
+      descEl.id = 'diagram-desc';
+      svg.insertBefore(descEl, titleEl.nextSibling);
+    } else if (!descEl.id) {
+      descEl.id = 'diagram-desc';
+    }
 
-        toolbar.appendChild(btn);
-        buttons.push(btn);
-      });
+    if (meta.title) titleEl.textContent = meta.title;
+    if (meta.desc)  descEl.textContent = meta.desc;
 
-      // 6) Add "Toggle All"
-      const allButton = document.createElement('button');
-      allButton.type = 'button';
-      allButton.id = 'toggle-all';
-      allButton.textContent = 'Toggle All';
-      allButton.setAttribute('aria-pressed', 'false');
-      toolbar.appendChild(allButton);
+    svg.setAttribute('aria-labelledby', `${titleEl.id} ${descEl.id}`);
 
-      function toggle(id) {
-        const el = svg.querySelector('#' + CSS.escape(id));
-        if (!el) return;
-        const hidden = el.classList.toggle('is-hidden');
-        const btn = buttons.find(b => b.dataset.target === id);
-        if (btn) btn.setAttribute('aria-pressed', hidden ? 'false' : 'true');
-      }
-
-      // 7) Individual button behavior
-      buttons.forEach(btn => {
-        btn.addEventListener('click', () => toggle(btn.dataset.target));
-      });
-
-      // 8) Toggle All behavior
-      allButton.addEventListener('click', () => {
-        const anyVisible = labelEls.some(el => !el.classList.contains('is-hidden'));
-        labelEls.forEach(el => el.classList.toggle('is-hidden', anyVisible));
-        buttons.forEach(b => b.setAttribute('aria-pressed', anyVisible ? 'false' : 'true'));
-        allButton.setAttribute('aria-pressed', anyVisible ? 'false' : 'true');
-      });
+    // 4) Index label data by id
+    const dataById = {};
+    labelData.forEach(item => {
+      if (item.id) dataById[item.id] = item;
     });
-  </script>
+
+    // 5) Apply text / tooltip / initial visibility from Sheet
+    labelEls.forEach(el => {
+      const info = dataById[el.id];
+      if (!info) return; // if no row, leave SVG as-is
+
+      // Multi-line support via newlines in the Sheet
+      const textNode = el.querySelector('text');
+      if (textNode && info.text) {
+        while (textNode.firstChild) {
+          textNode.removeChild(textNode.firstChild);
+        }
+
+        const lines = String(info.text).split(/\r?\n/);
+        lines.forEach((line, index) => {
+          const tspan = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
+          tspan.textContent = line;
+
+          if (index === 0) {
+            tspan.setAttribute('x', textNode.getAttribute('x') || '0');
+            tspan.setAttribute('y', textNode.getAttribute('y') || '0');
+          } else {
+            tspan.setAttribute('x', textNode.getAttribute('x') || '0');
+            tspan.setAttribute('dy', '1em');
+          }
+          textNode.appendChild(tspan);
+        });
+      }
+
+      if (info.tooltip) {
+        el.setAttribute('aria-label', info.tooltip);
+        el.setAttribute('title', info.tooltip);
+      }
+
+      if (info.visible === false) {
+        el.classList.add('is-hidden');
+      } else {
+        el.classList.remove('is-hidden');
+      }
+    });
+
+    // 6) Randomize label order for buttons
+    const shuffledLabels = [...labelEls];
+    for (let i = shuffledLabels.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffledLabels[i], shuffledLabels[j]] = [shuffledLabels[j], shuffledLabels[i]];
+    }
+
+    const buttons = [];
+
+    // 🔹 Remove loading message now that we're about to render controls
+    if (loadingMsg) {
+      loadingMsg.remove();
+    }
+
+    // 7) Build buttons
+    shuffledLabels.forEach(el => {
+      const id = el.id;
+      const info = dataById[id];
+      const fallbackName = id.replace(/^Label_/, '').replace(/_/g, ' ');
+      const name = info && info.text ? info.text.replace(/\r?\n/g, ' ') : fallbackName;
+
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.dataset.target = id;
+      btn.setAttribute('aria-controls', id);
+
+      const isHidden = el.classList.contains('is-hidden');
+      btn.setAttribute('aria-pressed', isHidden ? 'false' : 'true');
+      btn.textContent = name;
+
+      toolbar.appendChild(btn);
+      buttons.push(btn);
+    });
+
+    // 8) Toggle all
+    const allButton = document.createElement('button');
+    allButton.type = 'button';
+    allButton.id = 'toggle-all';
+    allButton.textContent = 'Toggle All';
+    allButton.setAttribute('aria-pressed', 'false');
+    toolbar.appendChild(allButton);
+
+    function toggle(id) {
+      const el = svg.querySelector('#' + CSS.escape(id));
+      if (!el) return;
+      const hidden = el.classList.toggle('is-hidden');
+      const btn = buttons.find(b => b.dataset.target === id);
+      if (btn) btn.setAttribute('aria-pressed', hidden ? 'false' : 'true');
+    }
+
+    buttons.forEach(btn => {
+      btn.addEventListener('click', () => toggle(btn.dataset.target));
+    });
+
+    allButton.addEventListener('click', () => {
+      const anyVisible = labelEls.some(el => !el.classList.contains('is-hidden'));
+      labelEls.forEach(el => el.classList.toggle('is-hidden', anyVisible));
+      buttons.forEach(b => b.setAttribute('aria-pressed', anyVisible ? 'false' : 'true'));
+      allButton.setAttribute('aria-pressed', anyVisible ? 'false' : 'true');
+    });
+
+    // 🔹 Announce "ready" for screen readers
+    if (srStatus) {
+      srStatus.textContent = 'Labels loaded and ready.';
+    }
+  });
+</script>
+
 </body>
 </html>
