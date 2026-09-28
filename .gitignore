@@ -1,0 +1,9 @@
+# Node dependencies
+node_modules/
+
+# OS hidden files
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log

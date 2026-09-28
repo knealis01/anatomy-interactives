@@ -50,7 +50,6 @@ function cleanAndOptimizeSvg(svgContent, assetId) {
 
   // 4. Perform SVG cleaning
   let cleaned = svgContent
-    // Remove vector editor metadata & Adobe namespace attributes
     .replace(/<!--[\s\S]*?-->/g, '') // remove XML comments
     .replace(/xmlns:i="[^"]*"/g, '')
     .replace(/xmlns:graph="[^"]*"/g, '')
@@ -96,7 +95,7 @@ function processAllSvgs() {
 
   const files = fs.readdirSync(SOURCE_DIR).filter(f => f.endsWith('.svg'));
   if (files.length === 0) {
-    console.log(`No .svg files found in '${SOURCE_DIR}'.`);
+    console.log(`No .svg files found in '${SOURCE_DIR}'. Place your raw heart.svg inside 'assets/source/'.`);
     return;
   }
 
@@ -125,15 +124,3 @@ function processAllSvgs() {
 }
 
 processAllSvgs();
-```[cite: 1]
-
----
-
-### How to Run the Preparation Tool
-
-1. Place your unoptimized vector export (e.g., `heart.svg`) into `assets/source/`[cite: 1].
-2. Run the preparation script using Node.js:
-   ```bash
-   node tools/prepare-svg/index.js
-   ```[cite: 1]
-3. The script will clean the illustration, write the output to `assets/prepared/heart.svg`, and generate `assets/manifests/heart.json`[cite: 1].
