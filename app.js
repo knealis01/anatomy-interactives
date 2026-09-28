@@ -1,18 +1,19 @@
 /**
  * Interactive SVG Course Engine & Activity Toolkit
- * Supports: Label Studio, Animated Layer Explorer, and Process Sequence Builder
- * Standards Target: WCAG 2.2 AA Accessibility
+ * Activity Modes: Label Studio, Animated Layer Explorer, Process Sequence Builder[cite: 2]
+ * Performance: Stale-While-Revalidate Browser Caching (localStorage)
+ * Standards Target: WCAG 2.2 Level AA Accessibility[cite: 2]
  */
 
 // 1. Configuration & URL Parameters
-const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx4bJpbVqQEFL6D86QRbOIFPbbIuVRhvHbnhQ8rXRuZLZRfByfbLb3Z6ELh28YX96V9Ig/exec";
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/YOUR_DEPLOYMENT_ID/exec";
 
 const urlParams = new URLSearchParams(window.location.search);
-const diagramId = (urlParams.get("diagram") || "heart").toLowerCase();
-const activeMode = (urlParams.get("mode") || "layer-explorer").toLowerCase(); // 'label-studio' | 'layer-explorer' | 'sequence-builder'
-const lang = (urlParams.get("lang") || "en").toLowerCase();
+const diagramId = (urlParams.get("diagram") || "heart").toLowerCase();[cite: 1]
+const activeMode = (urlParams.get("mode") || "layer-explorer").toLowerCase(); // 'label-studio' | 'layer-explorer' | 'sequence-builder'[cite: 2]
+const lang = (urlParams.get("lang") || "en").toLowerCase();[cite: 1]
 
-// 2. State Management
+// 2. Application State Management
 const state = {
   config: null,
   svgElement: null,
@@ -21,12 +22,48 @@ const state = {
   isPlaying: false,
   playbackSpeed: 1.0,
   animationTimer: null,
-  isReducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+  isReducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches,[cite: 2]
   // Sequence Builder State
   userSequence: []
 };
 
-// 3. Inject CSS Styles for SVG Animations & Highlights
+// 3. Stale-While-Revalidate Caching Helper
+async function fetchWithCache(url, cacheKey) {
+  const cached = localStorage.getItem(cacheKey);
+  const isSvg = url.endsWith(".svg");
+
+  if (cached) {
+    // Silently revalidate in background to keep data fresh without blocking UI
+    fetch(url)
+      .then((res) => (res.ok ? (isSvg ? res.text() : res.json()) : null))
+      .then((freshData) => {
+        if (freshData !== null) {
+          const dataToStore = isSvg ? freshData : JSON.stringify(freshData);
+          localStorage.setItem(cacheKey, dataToStore);
+        }
+      })
+      .catch(() => {});
+
+    if (isSvg) {
+      return cached;
+    } else {
+      try {
+        return JSON.parse(cached);
+      } catch (e) {
+        return cached;
+      }
+    }
+  }
+
+  // Initial network fetch if not yet cached
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
+  const data = isSvg ? await res.text() : await res.json();
+  localStorage.setItem(cacheKey, isSvg ? data : JSON.stringify(data));
+  return data;
+}
+
+// 4. Dynamic CSS Injection for SVG Animation & Focus States
 function injectAnimationStyles() {
   if (document.getElementById("svg-engine-styles")) return;
   const style = document.createElement("style");
@@ -60,8 +97,8 @@ function injectAnimationStyles() {
     }
     .sequence-controls button {
       margin-left: 4px;
-      min-height: 36px;
-      padding: 4px 8px;
+      min-height: 44px;
+      padding: 6px 12px;
       cursor: pointer;
     }
     .playback-controls {
@@ -70,6 +107,11 @@ function injectAnimationStyles() {
       align-items: center;
       margin-bottom: 16px;
       flex-wrap: wrap;
+    }
+    .playback-controls button {
+      min-height: 44px;
+      padding: 8px 14px;
+      cursor: pointer;
     }
     .caption-box {
       padding: 12px 16px;
@@ -82,40 +124,38 @@ function injectAnimationStyles() {
   document.head.appendChild(style);
 }
 
-// 4. Main Initialization
+// 5. Main Application Initialization
 async function initInteractiveApp() {
   injectAnimationStyles();
   
-  const toolbarContainer = document.getElementById("toolbar-container");
-  const svgContainer = document.getElementById("svg-container");
+  const toolbarContainer = document.getElementById("toolbar-container");[cite: 3]
+  const svgContainer = document.getElementById("svg-container");[cite: 3]
   
   try {
-    // Concurrent fetch of SVG geometry and Google Sheets API payload
-    const [svgResponse, apiResponse] = await Promise.all([
-      fetch(`./assets/prepared/${diagramId}.svg`),
-      fetch(`${APPS_SCRIPT_URL}?diagram=${diagramId}&lang=${lang}`)
+    const svgKey = `cache_svg_${diagramId}`;
+    const apiKey = `cache_api_${diagramId}_${lang}`;
+
+    // Concurrent load from cache or network
+    const [svgText, configData] = await Promise.all([
+      fetchWithCache(`./assets/prepared/${diagramId}.svg`, svgKey),[cite: 2]
+      fetchWithCache(`${APPS_SCRIPT_URL}?diagram=${diagramId}&lang=${lang}`, apiKey)[cite: 1]
     ]);
 
-    if (!svgResponse.ok) throw new Error(`SVG file not found (Status ${svgResponse.status})`);
-    if (!apiResponse.ok) throw new Error(`API Endpoint Error (Status ${apiResponse.status})`);
+    state.config = configData;
 
-    const svgText = await svgResponse.text();
-    state.config = await apiResponse.json();
-
-    // Inject SVG into DOM
+    // Inject SVG markup into DOM[cite: 3]
     svgContainer.innerHTML = svgText;
     state.svgElement = svgContainer.querySelector("svg");
 
-    // Populate Page Metadata
+    // Populate Diagram Metadata[cite: 1]
     if (state.config.meta) {
-      if (state.config.meta.title) document.getElementById("diagram-title").textContent = state.config.meta.title;
-      if (state.config.meta.desc) document.getElementById("diagram-desc").textContent = state.config.meta.desc;
+      if (state.config.meta.title) document.getElementById("diagram-title").textContent = state.config.meta.title;[cite: 1]
+      if (state.config.meta.desc) document.getElementById("diagram-desc").textContent = state.config.meta.desc;[cite: 1]
     }
 
-    // Clear toolbar loader
     toolbarContainer.innerHTML = "";
 
-    // Route to active Activity Template
+    // Route to specified activity template[cite: 2]
     switch (activeMode) {
       case "label-studio":
         initLabelStudio(toolbarContainer);
@@ -131,28 +171,30 @@ async function initInteractiveApp() {
 
   } catch (error) {
     console.error("Initialization Error:", error);
-    toolbarContainer.innerHTML = `<span style="color:#d32f2f;">Error loading activity: ${error.message}</span>`;
+    if (toolbarContainer) {
+      toolbarContainer.innerHTML = `<span style="color:#d32f2f;">Error loading activity: ${error.message}</span>`;
+    }
   }
 }
 
 // ============================================================================
-// TEMPLATE 1: SVG Label Studio
+// TEMPLATE 1: SVG Label Studio[cite: 2]
 // ============================================================================
 function initLabelStudio(container) {
-  const labels = state.config.labels || [];
+  const labels = state.config.labels || [];[cite: 1]
   if (labels.length === 0) {
     container.innerHTML = "<span>No label definitions found for this activity.</span>";
     return;
   }
 
   labels.forEach((label) => {
-    const targetGroup = document.getElementById(label.id);
+    const targetGroup = document.getElementById(label.id);[cite: 1, 3]
     const button = document.createElement("button");
     button.className = "toggle-btn";
     button.type = "button";
-    button.textContent = label.text;
+    button.textContent = label.text;[cite: 1]
     
-    let isVisible = label.visible !== false;
+    let isVisible = label.visible !== false;[cite: 1]
     button.setAttribute("aria-pressed", isVisible ? "true" : "false");
     
     if (targetGroup) targetGroup.style.display = isVisible ? "" : "none";
@@ -169,18 +211,18 @@ function initLabelStudio(container) {
 }
 
 // ============================================================================
-// TEMPLATE 2: Animated Layer Explorer
+// TEMPLATE 2: Animated Layer Explorer[cite: 2]
 // ============================================================================
 function initLayerExplorer(container) {
-  // Use step configurations from Google Sheets backend or fallback defaults
+  // Use animation sequence steps from Google Sheet or fallback defaults[cite: 2]
   const steps = state.config.animations || state.config.steps || [
-    { step_id: "step-1", order: 1, element_id: "Label_Right_atrium", action: "highlight", duration: 800, caption: "Deoxygenated blood enters the Right Atrium." },
-    { step_id: "step-2", order: 2, element_id: "Label_Right_ventricle", action: "pulse", duration: 1000, caption: "Blood flows down into the Right Ventricle." },
-    { step_id: "step-3", order: 3, element_id: "Label_Pulmonary_artery", action: "fade-in", duration: 700, caption: "Blood is pumped to the lungs through the Pulmonary Artery." },
-    { step_id: "step-4", order: 4, element_id: "Label_Aorta", action: "highlight", duration: 800, caption: "Oxygenated blood is distributed to the body via the Aorta." }
+    { step_id: "step-1", order: 1, element_id: "Label_Right_atrium", action: "highlight", duration: 800, caption: "Deoxygenated blood enters the Right Atrium." },[cite: 2, 4]
+    { step_id: "step-2", order: 2, element_id: "Label_Right_ventricle", action: "pulse", duration: 1000, caption: "Blood flows down into the Right Ventricle." },[cite: 2, 4]
+    { step_id: "step-3", order: 3, element_id: "Label_Pulmonary_artery", action: "fade-in", duration: 700, caption: "Blood is pumped to the lungs through the Pulmonary Artery." },[cite: 2, 4]
+    { step_id: "step-4", order: 4, element_id: "Label_Aorta", action: "highlight", duration: 800, caption: "Oxygenated blood is distributed to the body via the Aorta." }[cite: 2, 4]
   ];
 
-  // Render Playback Controls
+  // Render Accessible Playback Controls[cite: 2]
   const controlsDiv = document.createElement("div");
   controlsDiv.className = "playback-controls";
   controlsDiv.innerHTML = `
@@ -188,20 +230,20 @@ function initLayerExplorer(container) {
     <button type="button" id="btn-play" aria-label="Play animation">▶ Play</button>
     <button type="button" id="btn-next" aria-label="Next step">Next ⏭</button>
     <button type="button" id="btn-restart" aria-label="Restart sequence">↺ Restart</button>
-    <label style="margin-left:12px;">
+    <label style="margin-left:12px; cursor:pointer;">
       <input type="checkbox" id="chk-reduced-motion" ${state.isReducedMotion ? "checked" : ""}> Reduce Motion
     </label>
-  `;
+  `;[cite: 2]
 
   const captionBox = document.createElement("div");
   captionBox.className = "caption-box";
   captionBox.id = "step-caption";
-  captionBox.setAttribute("aria-live", "polite");
+  captionBox.setAttribute("aria-live", "polite");[cite: 2]
 
   container.appendChild(controlsDiv);
   container.appendChild(captionBox);
 
-  // Bind Control Event Handlers
+  // Bind Interaction Event Listeners
   const btnPlay = document.getElementById("btn-play");
   const btnPrev = document.getElementById("btn-prev");
   const btnNext = document.getElementById("btn-next");
@@ -210,14 +252,14 @@ function initLayerExplorer(container) {
 
   chkMotion.addEventListener("change", (e) => {
     state.isReducedMotion = e.target.checked;
-    announceStatus(`Reduced motion ${state.isReducedMotion ? "enabled" : "disabled"}.`);
+    announceStatus(`Reduced motion ${state.isReducedMotion ? "enabled" : "disabled"}.`);[cite: 2]
   });
 
   btnPlay.addEventListener("click", () => {
     if (state.isPlaying) {
-      pauseAnimation(btnPlay);
+      pauseAnimation(btnPlay);[cite: 2]
     } else {
-      playAnimation(steps, btnPlay);
+      playAnimation(steps, btnPlay);[cite: 2]
     }
   });
 
@@ -244,7 +286,7 @@ function initLayerExplorer(container) {
     applyAnimationStep(steps[0]);
   });
 
-  // Load first step
+  // Load Initial Animation Step
   applyAnimationStep(steps[0]);
 }
 
@@ -253,15 +295,15 @@ function applyAnimationStep(stepData) {
 
   clearSvgEffects();
   const captionBox = document.getElementById("step-caption");
-  if (captionBox) captionBox.textContent = `Step ${stepData.order || state.currentStepIndex + 1}: ${stepData.caption}`;
+  if (captionBox) captionBox.textContent = `Step ${stepData.order || state.currentStepIndex + 1}: ${stepData.caption}`;[cite: 2]
 
-  const targetEl = document.getElementById(stepData.element_id);
+  const targetEl = document.getElementById(stepData.element_id);[cite: 2]
   if (!targetEl) {
     announceStatus(`Step ${stepData.order}: ${stepData.caption}`);
     return;
   }
 
-  // If user prefers reduced motion, render state changes instantly without transitions
+  // Honor Reduced Motion preference by bypassing smooth CSS transitions[cite: 2]
   if (state.isReducedMotion) {
     targetEl.style.display = "";
     targetEl.classList.add("svg-highlight");
@@ -269,24 +311,24 @@ function applyAnimationStep(stepData) {
     return;
   }
 
-  // Execute Action Type
-  const duration = (stepData.duration || 800) / state.playbackSpeed;
+  // Trigger targeted CSS effects[cite: 2]
+  const duration = (stepData.duration || 800) / state.playbackSpeed;[cite: 2]
   targetEl.style.setProperty("--anim-duration", `${duration}ms`);
 
   switch (stepData.action) {
-    case "fade-in":
+    case "fade-in":[cite: 2]
       targetEl.style.display = "";
       targetEl.style.opacity = "0";
       targetEl.classList.add("svg-fade-transition");
       setTimeout(() => { targetEl.style.opacity = "1"; }, 20);
       break;
 
-    case "pulse":
+    case "pulse":[cite: 2]
       targetEl.style.display = "";
       targetEl.classList.add("svg-pulse");
       break;
 
-    case "highlight":
+    case "highlight":[cite: 2]
     default:
       targetEl.style.display = "";
       targetEl.classList.add("svg-highlight");
@@ -298,7 +340,7 @@ function applyAnimationStep(stepData) {
 
 function playAnimation(steps, playButton) {
   state.isPlaying = true;
-  playButton.textContent = "⏸ Pause";
+  playButton.textContent = "⏸ Pause";[cite: 2]
 
   const advance = () => {
     if (!state.isPlaying) return;
@@ -320,7 +362,7 @@ function playAnimation(steps, playButton) {
 
 function pauseAnimation(playButton) {
   state.isPlaying = false;
-  if (playButton) playButton.textContent = "▶ Play";
+  if (playButton) playButton.textContent = "▶ Play";[cite: 2]
   if (state.animationTimer) clearTimeout(state.animationTimer);
 }
 
@@ -334,17 +376,17 @@ function clearSvgEffects() {
 }
 
 // ============================================================================
-// TEMPLATE 3: Process Sequence Builder (WCAG Keyboard-Accessible)
+// TEMPLATE 3: Process Sequence Builder (Keyboard Accessible)[cite: 2]
 // ============================================================================
 function initSequenceBuilder(container) {
   const sequences = state.config.sequences || [
-    { item_id: "seq-1", label: "Deoxygenated blood enters Right Atrium", expected_order: 1, feedback: "Blood always enters the right atrium first from the vena cava." },
-    { item_id: "seq-2", label: "Blood flows through Tricuspid Valve to Right Ventricle", expected_order: 2, feedback: "The tricuspid valve leads into the right ventricular chamber." },
-    { item_id: "seq-3", label: "Right Ventricle pumps blood to Pulmonary Artery", expected_order: 3, feedback: "Deoxygenated blood travels via the pulmonary artery toward the lungs." },
-    { item_id: "seq-4", label: "Oxygenated blood returns via Pulmonary Veins to Left Atrium", expected_order: 4, feedback: "Freshly oxygenated blood returns through pulmonary veins into the left atrium." }
+    { item_id: "seq-1", label: "Deoxygenated blood enters Right Atrium", expected_order: 1, feedback: "Blood always enters the right atrium first from the vena cava." },[cite: 2]
+    { item_id: "seq-2", label: "Blood flows through Tricuspid Valve to Right Ventricle", expected_order: 2, feedback: "The tricuspid valve leads into the right ventricular chamber." },[cite: 2]
+    { item_id: "seq-3", label: "Right Ventricle pumps blood to Pulmonary Artery", expected_order: 3, feedback: "Deoxygenated blood travels via the pulmonary artery toward the lungs." },[cite: 2]
+    { item_id: "seq-4", label: "Oxygenated blood returns via Pulmonary Veins to Left Atrium", expected_order: 4, feedback: "Freshly oxygenated blood returns through pulmonary veins into the left atrium." }[cite: 2]
   ];
 
-  // Initialize with shuffled order for learner challenge
+  // Initialize with shuffled order for learning challenge
   state.userSequence = [...sequences].sort(() => Math.random() - 0.5);
 
   const wrapper = document.createElement("div");
@@ -355,6 +397,7 @@ function initSequenceBuilder(container) {
   checkBtn.textContent = "Check Sequence Order";
   checkBtn.style.marginTop = "12px";
   checkBtn.style.padding = "10px 16px";
+  checkBtn.style.minHeight = "44px";
 
   const feedbackBox = document.createElement("div");
   feedbackBox.className = "caption-box";
@@ -374,7 +417,7 @@ function initSequenceBuilder(container) {
     for (let i = 0; i < state.userSequence.length; i++) {
       if (state.userSequence[i].expected_order !== i + 1) {
         isCorrect = false;
-        feedbackText = `Not quite. Examine step ${i + 1}: "${state.userSequence[i].label}". ${state.userSequence[i].feedback}`;
+        feedbackText = `Not quite. Examine step ${i + 1}: "${state.userSequence[i].label}". ${state.userSequence[i].feedback}`;[cite: 2]
         break;
       }
     }
@@ -398,15 +441,16 @@ function renderSequenceList(container) {
     const controls = document.createElement("div");
     controls.className = "sequence-controls";
 
+    // Non-pointer Move Up / Move Down buttons for complete keyboard accessibility[cite: 2]
     const moveUpBtn = document.createElement("button");
     moveUpBtn.type = "button";
-    moveUpBtn.textContent = "▲ Move Up";
+    moveUpBtn.textContent = "▲ Move Up";[cite: 2]
     moveUpBtn.disabled = index === 0;
     moveUpBtn.setAttribute("aria-label", `Move ${item.label} up`);
 
     const moveDownBtn = document.createElement("button");
     moveDownBtn.type = "button";
-    moveDownBtn.textContent = "▼ Move Down";
+    moveDownBtn.textContent = "▼ Move Down";[cite: 2]
     moveDownBtn.disabled = index === state.userSequence.length - 1;
     moveDownBtn.setAttribute("aria-label", `Move ${item.label} down`);
 
@@ -430,7 +474,7 @@ function renderSequenceList(container) {
   });
 }
 
-// 5. Utility: Broadcast Messages to Screen Reader Live Region
+// 6. Utility: Announce State Changes to Screen Reader Live Region[cite: 2]
 function announceStatus(message) {
   const announcer = document.getElementById("status-announcer");
   if (announcer) {
@@ -438,17 +482,5 @@ function announceStatus(message) {
   }
 }
 
-// Initialize application on DOM ready
+// Initialize application when DOM is ready
 document.addEventListener("DOMContentLoaded", initInteractiveApp);
-```[cite: 1, 2, 3]
-
----
-
-### How to Test Each Activity Mode via URL Parameters
-
-You can switch between the three interactive templates by changing the `mode` parameter in your browser address bar[cite: 1, 2]:
-
-* **Animated Layer Explorer**: `index.html?diagram=heart&mode=layer-explorer`[cite: 1, 2]
-* **Label Studio**: `index.html?diagram=heart&mode=label-studio`[cite: 1, 2]
-* **Process Sequence Builder**: `index.html?diagram=heart&mode=sequence-builder`[cite: 1, 2]
-* **Spanish Localization**: `index.html?diagram=heart&mode=layer-explorer&lang=es`[cite: 2, 4]
