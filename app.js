@@ -5,7 +5,7 @@
  */
 
 // 1. Configuration & URL Parameters
-const APPS_SCRIPT_URL = "https://script.google.com/macros/s/YOUR_DEPLOYMENT_ID/exec";
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx4bJpbVqQEFL6D86QRbOIFPbbIuVRhvHbnhQ8rXRuZLZRfByfbLb3Z6ELh28YX96V9Ig/exec";
 
 const urlParams = new URLSearchParams(window.location.search);
 const diagramId = (urlParams.get("diagram") || "heart").toLowerCase();
