@@ -6,12 +6,11 @@
  */
 
 // 1. Configuration & URL Parameters
-// Update this URL with your actual Google Apps Script Web App Deployment ID
-const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyiXN1jBX3VlhaOTY6RNDeadNPwKDWpQJw_2SXSmH2E-7CF--EoL5l8lbDzDdSni3LJ1g/exec";
+const APPS_SCRIPT_URL = "https://script.google.com/a/macros/macmillan.com/s/AKfycbza6NpSkAnwtmqbnnITKm5wnLdf0vkNIzQKEK8n0mqfEN2PgN5j2JMBTXY1h04QQPg1Rg/exec";
 
 const urlParams = new URLSearchParams(window.location.search);
 const diagramId = (urlParams.get("diagram") || "heart").toLowerCase();
-const activeMode = (urlParams.get("mode") || "layer-explorer").toLowerCase(); // 'label-studio' | 'layer-explorer' | 'sequence-builder'
+const activeMode = (urlParams.get("mode") || "label-studio").toLowerCase(); // 'label-studio' | 'layer-explorer' | 'sequence-builder'
 const lang = (urlParams.get("lang") || "en").toLowerCase();
 
 // 2. Application State Management
@@ -128,10 +127,18 @@ function injectAnimationStyles() {
 // 5. Main Application Initialization (Fault-Tolerant)
 async function initInteractiveApp() {
   injectAnimationStyles();
-  
+
   const toolbarContainer = document.getElementById("toolbar-container");
   const svgContainer = document.getElementById("svg-container");
-  
+  const errorBox = document.getElementById("load-error");
+  const retryBtn = document.getElementById("retry-load");
+
+  if (errorBox) errorBox.hidden = true;
+  if (retryBtn && !retryBtn.dataset.wired) {
+    retryBtn.dataset.wired = "true";
+    retryBtn.addEventListener("click", initInteractiveApp);
+  }
+
   const svgKey = `cache_svg_${diagramId}`;
   const apiKey = `cache_api_${diagramId}_${lang}`;
 
@@ -150,64 +157,182 @@ async function initInteractiveApp() {
   try {
     const configData = await fetchWithCache(`${APPS_SCRIPT_URL}?diagram=${diagramId}&lang=${lang}`, apiKey);
     state.config = configData;
-
-    if (state.config && state.config.meta) {
-      if (state.config.meta.title) document.getElementById("diagram-title").textContent = state.config.meta.title;
-      if (state.config.meta.desc) document.getElementById("diagram-desc").textContent = state.config.meta.desc;
-    }
+    applyDiagramMeta(state.config.meta);
 
     toolbarContainer.innerHTML = "";
 
     switch (activeMode) {
-      case "label-studio":
-        initLabelStudio(toolbarContainer);
-        break;
       case "sequence-builder":
         initSequenceBuilder(toolbarContainer);
+        break;
+      case "layer-explorer":
+        initLayerExplorer(toolbarContainer);
+        break;
+      case "label-studio":
+      default:
+        initLabelStudio(toolbarContainer);
+        break;
+    }
+
+    announceStatus("Activity data loaded and ready.");
+  } catch (apiError) {
+    console.warn("API Endpoint Warning (using default controls):", apiError);
+    // Fallback config if Apps Script API endpoint times out or is offline
+    state.config = state.config || {};
+    if (errorBox) errorBox.hidden = false;
+    announceStatus("Activity data unavailable; showing default content.");
+
+    toolbarContainer.innerHTML = "";
+    switch (activeMode) {
+      case "sequence-builder":
+        initSequenceBuilder(toolbarContainer);
+        break;
+      case "label-studio":
+        initLabelStudio(toolbarContainer);
         break;
       case "layer-explorer":
       default:
         initLayerExplorer(toolbarContainer);
         break;
     }
-
-  } catch (apiError) {
-    console.warn("API Endpoint Warning (using default controls):", apiError);
-    // Fallback config if Apps Script API endpoint times out or is offline
-    state.config = state.config || {};
-    toolbarContainer.innerHTML = "";
-    initLayerExplorer(toolbarContainer);
   }
+}
+
+// Applies Sheet-provided title/description to both the HTML header and the
+// SVG's own <title>/<desc> so screen readers announce it via aria-labelledby.
+function applyDiagramMeta(meta) {
+  if (!meta) return;
+
+  if (meta.title) {
+    const titleHeader = document.getElementById("diagram-title");
+    if (titleHeader) titleHeader.textContent = meta.title;
+  }
+  if (meta.desc) {
+    const descHeader = document.getElementById("diagram-desc");
+    if (descHeader) descHeader.textContent = meta.desc;
+  }
+
+  const svg = state.svgElement;
+  if (!svg) return;
+
+  svg.setAttribute("role", "img");
+
+  let titleEl = svg.querySelector("title");
+  let descEl = svg.querySelector("desc");
+
+  if (!titleEl) {
+    titleEl = document.createElementNS("http://www.w3.org/2000/svg", "title");
+    titleEl.id = "svg-title";
+    svg.insertBefore(titleEl, svg.firstChild);
+  } else if (!titleEl.id) {
+    titleEl.id = "svg-title";
+  }
+
+  if (!descEl) {
+    descEl = document.createElementNS("http://www.w3.org/2000/svg", "desc");
+    descEl.id = "svg-desc";
+    svg.insertBefore(descEl, titleEl.nextSibling);
+  } else if (!descEl.id) {
+    descEl.id = "svg-desc";
+  }
+
+  if (meta.title) titleEl.textContent = meta.title;
+  if (meta.desc) descEl.textContent = meta.desc;
+
+  svg.setAttribute("aria-labelledby", `${titleEl.id} ${descEl.id}`);
 }
 
 // TEMPLATE 1: SVG Label Studio
 function initLabelStudio(container) {
-  const labels = (state.config && state.config.labels) || [];
-  if (labels.length === 0) {
-    container.innerHTML = "<span>No label definitions found for this activity.</span>";
+  const svg = state.svgElement;
+  const labelEls = svg ? Array.from(svg.querySelectorAll('[id^="Label_"]')) : [];
+
+  if (labelEls.length === 0) {
+    container.innerHTML = "<span>No Label_* groups found in this illustration.</span>";
     return;
   }
 
-  labels.forEach((label) => {
-    const targetGroup = document.getElementById(label.id);
+  // Index Sheet-provided label data (text, tooltip, default visibility) by svg id.
+  const dataById = {};
+  ((state.config && state.config.labels) || []).forEach((item) => {
+    if (item.id) dataById[item.id] = item;
+  });
+
+  // Build buttons in randomized order so the toolbar doubles as a light
+  // "name the structure" quiz rather than mirroring the SVG's draw order.
+  const shuffled = [...labelEls];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+
+  const buttons = [];
+
+  shuffled.forEach((el) => {
+    const info = dataById[el.id];
+    const fallbackName = el.id.replace(/^Label_/, "").replace(/_/g, " ");
+
     const button = document.createElement("button");
-    button.className = "toggle-btn";
     button.type = "button";
-    button.textContent = label.text;
-    
-    let isVisible = label.visible !== false;
+    button.className = "toggle-btn";
+    button.dataset.target = el.id;
+    button.setAttribute("aria-controls", el.id);
+
+    const isVisible = info ? info.visible !== false : !el.classList.contains("is-hidden");
     button.setAttribute("aria-pressed", isVisible ? "true" : "false");
-    
-    if (targetGroup) targetGroup.style.display = isVisible ? "" : "none";
+    button.textContent = info && info.text ? info.text.replace(/\r?\n/g, " ") : fallbackName;
+
+    el.classList.toggle("is-hidden", !isVisible);
+    if (info && info.tooltip) {
+      el.setAttribute("aria-label", info.tooltip);
+      el.setAttribute("title", info.tooltip);
+    }
+    patchLabelText(el, info);
 
     button.addEventListener("click", () => {
-      isVisible = !isVisible;
-      button.setAttribute("aria-pressed", isVisible ? "true" : "false");
-      if (targetGroup) targetGroup.style.display = isVisible ? "" : "none";
-      announceStatus(`${label.text} label ${isVisible ? "shown" : "hidden"}.`);
+      const hidden = el.classList.toggle("is-hidden");
+      button.setAttribute("aria-pressed", hidden ? "false" : "true");
+      announceStatus(`${button.textContent} label ${hidden ? "hidden" : "shown"}.`);
     });
 
     container.appendChild(button);
+    buttons.push(button);
+  });
+
+  const allButton = document.createElement("button");
+  allButton.type = "button";
+  allButton.id = "toggle-all";
+  allButton.textContent = "Toggle All";
+  allButton.setAttribute("aria-pressed", "false");
+  allButton.addEventListener("click", () => {
+    const anyVisible = labelEls.some((el) => !el.classList.contains("is-hidden"));
+    labelEls.forEach((el) => el.classList.toggle("is-hidden", anyVisible));
+    buttons.forEach((b) => b.setAttribute("aria-pressed", anyVisible ? "false" : "true"));
+    allButton.setAttribute("aria-pressed", anyVisible ? "false" : "true");
+    announceStatus(anyVisible ? "All labels hidden." : "All labels shown.");
+  });
+  container.appendChild(allButton);
+}
+
+// Replaces a label group's <text> content with Sheet-provided text, wrapping
+// multi-line entries in <tspan>s anchored to the original x/y position.
+function patchLabelText(el, info) {
+  if (!info || !info.text) return;
+  const textNode = el.querySelector("text");
+  if (!textNode) return;
+
+  while (textNode.firstChild) textNode.removeChild(textNode.firstChild);
+
+  String(info.text).split(/\r?\n/).forEach((line, index) => {
+    const tspan = document.createElementNS("http://www.w3.org/2000/svg", "tspan");
+    tspan.textContent = line;
+    tspan.setAttribute("x", textNode.getAttribute("x") || "0");
+    if (index === 0) {
+      tspan.setAttribute("y", textNode.getAttribute("y") || "0");
+    } else {
+      tspan.setAttribute("dy", "1em");
+    }
+    textNode.appendChild(tspan);
   });
 }
 
