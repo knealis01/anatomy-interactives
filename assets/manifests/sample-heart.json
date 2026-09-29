@@ -3,10 +3,71 @@
   "viewBox": [
     0,
     0,
-    348.6,
-    235.2
+    358,
+    224
   ],
-  "elementCount": 8,
+  "elementCount": 19,
   "issues": [],
-  "elements": []
+  "elements": [
+    {
+      "id": "Label_Right_ventricle",
+      "type": "label",
+      "accessibleName": "Right ventricle"
+    },
+    {
+      "id": "Label_Posterior_interventricular_artery",
+      "type": "label",
+      "accessibleName": "Posterior interventricular artery"
+    },
+    {
+      "id": "Label_Inferior_vena_cava",
+      "type": "label",
+      "accessibleName": "Inferior vena cava"
+    },
+    {
+      "id": "Label_Right_atrium",
+      "type": "label",
+      "accessibleName": "Right atrium"
+    },
+    {
+      "id": "Label_Pulmonary_veins",
+      "type": "label",
+      "accessibleName": "Pulmonary veins"
+    },
+    {
+      "id": "Label_Superior_vena_cava",
+      "type": "label",
+      "accessibleName": "Superior vena cava"
+    },
+    {
+      "id": "Label_Left_ventricle",
+      "type": "label",
+      "accessibleName": "Left ventricle"
+    },
+    {
+      "id": "Label_Middle_cardiac_vein",
+      "type": "label",
+      "accessibleName": "Middle cardiac vein"
+    },
+    {
+      "id": "Label_Coronary_sinus",
+      "type": "label",
+      "accessibleName": "Coronary sinus"
+    },
+    {
+      "id": "Label_Left_atrium",
+      "type": "label",
+      "accessibleName": "Left atrium"
+    },
+    {
+      "id": "Label_Pulmonary_artery",
+      "type": "label",
+      "accessibleName": "Pulmonary artery"
+    },
+    {
+      "id": "Label_Aorta",
+      "type": "label",
+      "accessibleName": "Aorta"
+    }
+  ]
 }
