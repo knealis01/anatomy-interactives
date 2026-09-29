@@ -7,7 +7,7 @@
 
 // 1. Configuration & URL Parameters
 // Update this URL with your actual Google Apps Script Web App Deployment ID
-const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwpH6W6uhsGl02zhI6w9HinipZycyvl2gRhBSvgxpY9dxaYW7r4-lyKp63Xh8S6gyHD_A/exec";
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyiXN1jBX3VlhaOTY6RNDeadNPwKDWpQJw_2SXSmH2E-7CF--EoL5l8lbDzDdSni3LJ1g/exec";
 
 const urlParams = new URLSearchParams(window.location.search);
 const diagramId = (urlParams.get("diagram") || "heart").toLowerCase();
