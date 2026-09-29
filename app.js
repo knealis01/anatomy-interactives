@@ -33,7 +33,7 @@ async function fetchWithCache(url, cacheKey) {
   const isSvg = url.endsWith(".svg");
 
   if (cached) {
-    // Background revalidation
+    // Silently revalidate in background to keep data fresh without blocking UI
     fetch(url)
       .then((res) => (res.ok ? (isSvg ? res.text() : res.json()) : null))
       .then((freshData) => {
@@ -55,7 +55,7 @@ async function fetchWithCache(url, cacheKey) {
     }
   }
 
-  // Initial network fetch
+  // Initial network fetch if not yet cached
   const res = await fetch(url);
   if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
   const data = isSvg ? await res.text() : await res.json();
@@ -63,63 +63,12 @@ async function fetchWithCache(url, cacheKey) {
   return data;
 }
 
-// 4. Justified Text Anchor & Multi-line Helper
-/**
- * Safely updates text content of an SVG label group while preserving 
- * text-anchor alignment (start/middle/end) and tspan horizontal offsets.
- */
-function updateSvgTextElement(targetGroup, newText) {
-  if (!targetGroup || !newText) return;
-
-  const textEl = targetGroup.querySelector("text");
-  if (!textEl) return;
-
-  // Preserve or determine text-anchor (start = left, middle = center, end = right)
-  let anchor = textEl.getAttribute("text-anchor");
-  if (!anchor) {
-    const computedAnchor = window.getComputedStyle(textEl).textAnchor;
-    if (computedAnchor && computedAnchor !== "none") {
-      anchor = computedAnchor;
-      textEl.setAttribute("text-anchor", anchor);
-    }
-  }
-
-  // Capture baseline horizontal anchor coordinate from <text> or first <tspan>
-  const firstTspan = textEl.querySelector("tspan");
-  const anchorX = textEl.getAttribute("x") || (firstTspan ? firstTspan.getAttribute("x") : "0");
-
-  // Normalize line breaks (<br>, <br/>, or \n)
-  const lines = String(newText).split(/<br\s*\/?>|\n/i);
-
-  // Clear existing nodes and rebuild tspans locked to the same anchor coordinate
-  textEl.innerHTML = "";
-
-  lines.forEach((lineText, index) => {
-    const tspan = document.createElementNS("http://www.w3.org/2000/svg", "tspan");
-    tspan.textContent = lineText.trim();
-    tspan.setAttribute("x", anchorX); // Keep all lines aligned to same horizontal anchor point
-    
-    if (index > 0) {
-      tspan.setAttribute("dy", "1.2em"); // Maintain line spacing for multi-line text
-    }
-
-    textEl.appendChild(tspan);
-  });
-}
-
-// 5. Dynamic CSS Injection for SVG Animation, Alignment & Focus States
+// 4. Dynamic CSS Injection for SVG Animation & Focus States
 function injectAnimationStyles() {
   if (document.getElementById("svg-engine-styles")) return;
   const style = document.createElement("style");
   style.id = "svg-engine-styles";
   style.textContent = `
-    /* Enforce text-anchor inheritance down through tspans */
-    g[id^="Label_"] text {
-      font-family: inherit;
-    }
-    g[id^="Label_"] tspan {
-      text-anchor: inherit;
-    }
     .svg-highlight {
       outline: 3px solid #005fcc !important;
       filter: drop-shadow(0px 0px 8px rgba(0, 95, 204, 0.8));
@@ -175,7 +124,7 @@ function injectAnimationStyles() {
   document.head.appendChild(style);
 }
 
-// 6. Main Application Initialization
+// 5. Main Application Initialization
 async function initInteractiveApp() {
   injectAnimationStyles();
   
@@ -194,7 +143,7 @@ async function initInteractiveApp() {
 
     state.config = configData;
 
-    // Inject SVG markup into DOM
+    // Inject SVG markup into DOM[cite: 3]
     svgContainer.innerHTML = svgText;
     state.svgElement = svgContainer.querySelector("svg");
 
@@ -240,12 +189,6 @@ function initLabelStudio(container) {
 
   labels.forEach((label) => {
     const targetGroup = document.getElementById(label.id);[cite: 1, 3]
-
-    // Update SVG label text content & preserve justified alignment
-    if (targetGroup && label.text) {
-      updateSvgTextElement(targetGroup, label.text);
-    }
-
     const button = document.createElement("button");
     button.className = "toggle-btn";
     button.type = "button";
@@ -271,6 +214,7 @@ function initLabelStudio(container) {
 // TEMPLATE 2: Animated Layer Explorer[cite: 2]
 // ============================================================================
 function initLayerExplorer(container) {
+  // Use animation sequence steps from Google Sheet or fallback defaults[cite: 2]
   const steps = state.config.animations || state.config.steps || [
     { step_id: "step-1", order: 1, element_id: "Label_Right_atrium", action: "highlight", duration: 800, caption: "Deoxygenated blood enters the Right Atrium." },[cite: 2, 4]
     { step_id: "step-2", order: 2, element_id: "Label_Right_ventricle", action: "pulse", duration: 1000, caption: "Blood flows down into the Right Ventricle." },[cite: 2, 4]
@@ -278,6 +222,7 @@ function initLayerExplorer(container) {
     { step_id: "step-4", order: 4, element_id: "Label_Aorta", action: "highlight", duration: 800, caption: "Oxygenated blood is distributed to the body via the Aorta." }[cite: 2, 4]
   ];
 
+  // Render Accessible Playback Controls[cite: 2]
   const controlsDiv = document.createElement("div");
   controlsDiv.className = "playback-controls";
   controlsDiv.innerHTML = `
@@ -298,6 +243,7 @@ function initLayerExplorer(container) {
   container.appendChild(controlsDiv);
   container.appendChild(captionBox);
 
+  // Bind Interaction Event Listeners
   const btnPlay = document.getElementById("btn-play");
   const btnPrev = document.getElementById("btn-prev");
   const btnNext = document.getElementById("btn-next");
@@ -340,6 +286,7 @@ function initLayerExplorer(container) {
     applyAnimationStep(steps[0]);
   });
 
+  // Load Initial Animation Step
   applyAnimationStep(steps[0]);
 }
 
@@ -356,6 +303,7 @@ function applyAnimationStep(stepData) {
     return;
   }
 
+  // Honor Reduced Motion preference by bypassing smooth CSS transitions[cite: 2]
   if (state.isReducedMotion) {
     targetEl.style.display = "";
     targetEl.classList.add("svg-highlight");
@@ -363,6 +311,7 @@ function applyAnimationStep(stepData) {
     return;
   }
 
+  // Trigger targeted CSS effects[cite: 2]
   const duration = (stepData.duration || 800) / state.playbackSpeed;[cite: 2]
   targetEl.style.setProperty("--anim-duration", `${duration}ms`);
 
@@ -437,6 +386,7 @@ function initSequenceBuilder(container) {
     { item_id: "seq-4", label: "Oxygenated blood returns via Pulmonary Veins to Left Atrium", expected_order: 4, feedback: "Freshly oxygenated blood returns through pulmonary veins into the left atrium." }[cite: 2]
   ];
 
+  // Initialize with shuffled order for learning challenge
   state.userSequence = [...sequences].sort(() => Math.random() - 0.5);
 
   const wrapper = document.createElement("div");
@@ -491,6 +441,7 @@ function renderSequenceList(container) {
     const controls = document.createElement("div");
     controls.className = "sequence-controls";
 
+    // Non-pointer Move Up / Move Down buttons for complete keyboard accessibility[cite: 2]
     const moveUpBtn = document.createElement("button");
     moveUpBtn.type = "button";
     moveUpBtn.textContent = "▲ Move Up";[cite: 2]
@@ -523,7 +474,7 @@ function renderSequenceList(container) {
   });
 }
 
-// 7. Screen Reader Announcement Utility[cite: 2]
+// 6. Utility: Announce State Changes to Screen Reader Live Region[cite: 2]
 function announceStatus(message) {
   const announcer = document.getElementById("status-announcer");
   if (announcer) {
@@ -531,4 +482,5 @@ function announceStatus(message) {
   }
 }
 
+// Initialize application when DOM is ready
 document.addEventListener("DOMContentLoaded", initInteractiveApp);
