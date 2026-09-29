@@ -1,17 +1,18 @@
 /**
  * Interactive SVG Course Engine & Activity Toolkit
- * Activity Modes: Label Studio, Animated Layer Explorer, Process Sequence Builder[cite: 2]
+ * Activity Modes: Label Studio, Animated Layer Explorer, Process Sequence Builder
  * Performance: Stale-While-Revalidate Browser Caching (localStorage)
- * Standards Target: WCAG 2.2 Level AA Accessibility[cite: 2]
+ * Standards Target: WCAG 2.2 Level AA Accessibility
  */
 
 // 1. Configuration & URL Parameters
-const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyJLlZ8bbBrjiFxbPcfHXiFDA5UfTSTzPIhY-hs8YAsqtVyLFeVzgMrp3EYupalSvZxOA/exec";
+// Update this URL with your actual Google Apps Script Web App Deployment ID
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/YOUR_DEPLOYMENT_ID/exec";
 
 const urlParams = new URLSearchParams(window.location.search);
-const diagramId = (urlParams.get("diagram") || "heart").toLowerCase();[cite: 1]
-const activeMode = (urlParams.get("mode") || "layer-explorer").toLowerCase(); // 'label-studio' | 'layer-explorer' | 'sequence-builder'[cite: 2]
-const lang = (urlParams.get("lang") || "en").toLowerCase();[cite: 1]
+const diagramId = (urlParams.get("diagram") || "heart").toLowerCase();
+const activeMode = (urlParams.get("mode") || "layer-explorer").toLowerCase(); // 'label-studio' | 'layer-explorer' | 'sequence-builder'
+const lang = (urlParams.get("lang") || "en").toLowerCase();
 
 // 2. Application State Management
 const state = {
@@ -22,7 +23,7 @@ const state = {
   isPlaying: false,
   playbackSpeed: 1.0,
   animationTimer: null,
-  isReducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches,[cite: 2]
+  isReducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
   // Sequence Builder State
   userSequence: []
 };
@@ -33,7 +34,7 @@ async function fetchWithCache(url, cacheKey) {
   const isSvg = url.endsWith(".svg");
 
   if (cached) {
-    // Silently revalidate in background to keep data fresh without blocking UI
+    // Revalidate in background to keep data fresh without blocking UI
     fetch(url)
       .then((res) => (res.ok ? (isSvg ? res.text() : res.json()) : null))
       .then((freshData) => {
@@ -55,7 +56,7 @@ async function fetchWithCache(url, cacheKey) {
     }
   }
 
-  // Initial network fetch if not yet cached
+  // Network fetch if not cached
   const res = await fetch(url);
   if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
   const data = isSvg ? await res.text() : await res.json();
@@ -124,38 +125,39 @@ function injectAnimationStyles() {
   document.head.appendChild(style);
 }
 
-// 5. Main Application Initialization
+// 5. Main Application Initialization (Fault-Tolerant)
 async function initInteractiveApp() {
   injectAnimationStyles();
   
-  const toolbarContainer = document.getElementById("toolbar-container");[cite: 3]
-  const svgContainer = document.getElementById("svg-container");[cite: 3]
+  const toolbarContainer = document.getElementById("toolbar-container");
+  const svgContainer = document.getElementById("svg-container");
   
+  const svgKey = `cache_svg_${diagramId}`;
+  const apiKey = `cache_api_${diagramId}_${lang}`;
+
+  // Step A: Load SVG Graphic independently so illustration renders immediately
   try {
-    const svgKey = `cache_svg_${diagramId}`;
-    const apiKey = `cache_api_${diagramId}_${lang}`;
-
-    // Concurrent load from cache or network
-    const [svgText, configData] = await Promise.all([
-      fetchWithCache(`./assets/prepared/${diagramId}.svg`, svgKey),[cite: 2]
-      fetchWithCache(`${APPS_SCRIPT_URL}?diagram=${diagramId}&lang=${lang}`, apiKey)[cite: 1]
-    ]);
-
-    state.config = configData;
-
-    // Inject SVG markup into DOM[cite: 3]
+    const svgText = await fetchWithCache(`./assets/prepared/${diagramId}.svg`, svgKey);
     svgContainer.innerHTML = svgText;
     state.svgElement = svgContainer.querySelector("svg");
+  } catch (svgError) {
+    console.error("SVG Asset Loading Error:", svgError);
+    svgContainer.innerHTML = `<p style="color:#d32f2f;">Failed to load illustration asset: assets/prepared/${diagramId}.svg</p>`;
+    return;
+  }
 
-    // Populate Diagram Metadata[cite: 1]
-    if (state.config.meta) {
-      if (state.config.meta.title) document.getElementById("diagram-title").textContent = state.config.meta.title;[cite: 1]
-      if (state.config.meta.desc) document.getElementById("diagram-desc").textContent = state.config.meta.desc;[cite: 1]
+  // Step B: Load API Metadata concurrently with fallback handling
+  try {
+    const configData = await fetchWithCache(`${APPS_SCRIPT_URL}?diagram=${diagramId}&lang=${lang}`, apiKey);
+    state.config = configData;
+
+    if (state.config && state.config.meta) {
+      if (state.config.meta.title) document.getElementById("diagram-title").textContent = state.config.meta.title;
+      if (state.config.meta.desc) document.getElementById("diagram-desc").textContent = state.config.meta.desc;
     }
 
     toolbarContainer.innerHTML = "";
 
-    // Route to specified activity template[cite: 2]
     switch (activeMode) {
       case "label-studio":
         initLabelStudio(toolbarContainer);
@@ -169,32 +171,31 @@ async function initInteractiveApp() {
         break;
     }
 
-  } catch (error) {
-    console.error("Initialization Error:", error);
-    if (toolbarContainer) {
-      toolbarContainer.innerHTML = `<span style="color:#d32f2f;">Error loading activity: ${error.message}</span>`;
-    }
+  } catch (apiError) {
+    console.warn("API Endpoint Warning (using default controls):", apiError);
+    // Fallback config if Apps Script API endpoint times out or is offline
+    state.config = state.config || {};
+    toolbarContainer.innerHTML = "";
+    initLayerExplorer(toolbarContainer);
   }
 }
 
-// ============================================================================
-// TEMPLATE 1: SVG Label Studio[cite: 2]
-// ============================================================================
+// TEMPLATE 1: SVG Label Studio
 function initLabelStudio(container) {
-  const labels = state.config.labels || [];[cite: 1]
+  const labels = (state.config && state.config.labels) || [];
   if (labels.length === 0) {
     container.innerHTML = "<span>No label definitions found for this activity.</span>";
     return;
   }
 
   labels.forEach((label) => {
-    const targetGroup = document.getElementById(label.id);[cite: 1, 3]
+    const targetGroup = document.getElementById(label.id);
     const button = document.createElement("button");
     button.className = "toggle-btn";
     button.type = "button";
-    button.textContent = label.text;[cite: 1]
+    button.textContent = label.text;
     
-    let isVisible = label.visible !== false;[cite: 1]
+    let isVisible = label.visible !== false;
     button.setAttribute("aria-pressed", isVisible ? "true" : "false");
     
     if (targetGroup) targetGroup.style.display = isVisible ? "" : "none";
@@ -210,19 +211,15 @@ function initLabelStudio(container) {
   });
 }
 
-// ============================================================================
-// TEMPLATE 2: Animated Layer Explorer[cite: 2]
-// ============================================================================
+// TEMPLATE 2: Animated Layer Explorer
 function initLayerExplorer(container) {
-  // Use animation sequence steps from Google Sheet or fallback defaults[cite: 2]
-  const steps = state.config.animations || state.config.steps || [
-    { step_id: "step-1", order: 1, element_id: "Label_Right_atrium", action: "highlight", duration: 800, caption: "Deoxygenated blood enters the Right Atrium." },[cite: 2, 4]
-    { step_id: "step-2", order: 2, element_id: "Label_Right_ventricle", action: "pulse", duration: 1000, caption: "Blood flows down into the Right Ventricle." },[cite: 2, 4]
-    { step_id: "step-3", order: 3, element_id: "Label_Pulmonary_artery", action: "fade-in", duration: 700, caption: "Blood is pumped to the lungs through the Pulmonary Artery." },[cite: 2, 4]
-    { step_id: "step-4", order: 4, element_id: "Label_Aorta", action: "highlight", duration: 800, caption: "Oxygenated blood is distributed to the body via the Aorta." }[cite: 2, 4]
+  const steps = (state.config && (state.config.animations || state.config.steps)) || [
+    { step_id: "step-1", order: 1, element_id: "Label_Right_atrium", action: "highlight", duration: 800, caption: "Deoxygenated blood enters the Right Atrium." },
+    { step_id: "step-2", order: 2, element_id: "Label_Right_ventricle", action: "pulse", duration: 1000, caption: "Blood flows down into the Right Ventricle." },
+    { step_id: "step-3", order: 3, element_id: "Label_Pulmonary_artery", action: "fade-in", duration: 700, caption: "Blood is pumped to the lungs through the Pulmonary Artery." },
+    { step_id: "step-4", order: 4, element_id: "Label_Aorta", action: "highlight", duration: 800, caption: "Oxygenated blood is distributed to the body via the Aorta." }
   ];
 
-  // Render Accessible Playback Controls[cite: 2]
   const controlsDiv = document.createElement("div");
   controlsDiv.className = "playback-controls";
   controlsDiv.innerHTML = `
@@ -233,17 +230,16 @@ function initLayerExplorer(container) {
     <label style="margin-left:12px; cursor:pointer;">
       <input type="checkbox" id="chk-reduced-motion" ${state.isReducedMotion ? "checked" : ""}> Reduce Motion
     </label>
-  `;[cite: 2]
+  `;
 
   const captionBox = document.createElement("div");
   captionBox.className = "caption-box";
   captionBox.id = "step-caption";
-  captionBox.setAttribute("aria-live", "polite");[cite: 2]
+  captionBox.setAttribute("aria-live", "polite");
 
   container.appendChild(controlsDiv);
   container.appendChild(captionBox);
 
-  // Bind Interaction Event Listeners
   const btnPlay = document.getElementById("btn-play");
   const btnPrev = document.getElementById("btn-prev");
   const btnNext = document.getElementById("btn-next");
@@ -252,14 +248,14 @@ function initLayerExplorer(container) {
 
   chkMotion.addEventListener("change", (e) => {
     state.isReducedMotion = e.target.checked;
-    announceStatus(`Reduced motion ${state.isReducedMotion ? "enabled" : "disabled"}.`);[cite: 2]
+    announceStatus(`Reduced motion ${state.isReducedMotion ? "enabled" : "disabled"}.`);
   });
 
   btnPlay.addEventListener("click", () => {
     if (state.isPlaying) {
-      pauseAnimation(btnPlay);[cite: 2]
+      pauseAnimation(btnPlay);
     } else {
-      playAnimation(steps, btnPlay);[cite: 2]
+      playAnimation(steps, btnPlay);
     }
   });
 
@@ -286,7 +282,6 @@ function initLayerExplorer(container) {
     applyAnimationStep(steps[0]);
   });
 
-  // Load Initial Animation Step
   applyAnimationStep(steps[0]);
 }
 
@@ -295,15 +290,14 @@ function applyAnimationStep(stepData) {
 
   clearSvgEffects();
   const captionBox = document.getElementById("step-caption");
-  if (captionBox) captionBox.textContent = `Step ${stepData.order || state.currentStepIndex + 1}: ${stepData.caption}`;[cite: 2]
+  if (captionBox) captionBox.textContent = `Step ${stepData.order || state.currentStepIndex + 1}: ${stepData.caption}`;
 
-  const targetEl = document.getElementById(stepData.element_id);[cite: 2]
+  const targetEl = document.getElementById(stepData.element_id);
   if (!targetEl) {
     announceStatus(`Step ${stepData.order}: ${stepData.caption}`);
     return;
   }
 
-  // Honor Reduced Motion preference by bypassing smooth CSS transitions[cite: 2]
   if (state.isReducedMotion) {
     targetEl.style.display = "";
     targetEl.classList.add("svg-highlight");
@@ -311,24 +305,23 @@ function applyAnimationStep(stepData) {
     return;
   }
 
-  // Trigger targeted CSS effects[cite: 2]
-  const duration = (stepData.duration || 800) / state.playbackSpeed;[cite: 2]
+  const duration = (stepData.duration || 800) / state.playbackSpeed;
   targetEl.style.setProperty("--anim-duration", `${duration}ms`);
 
   switch (stepData.action) {
-    case "fade-in":[cite: 2]
+    case "fade-in":
       targetEl.style.display = "";
       targetEl.style.opacity = "0";
       targetEl.classList.add("svg-fade-transition");
       setTimeout(() => { targetEl.style.opacity = "1"; }, 20);
       break;
 
-    case "pulse":[cite: 2]
+    case "pulse":
       targetEl.style.display = "";
       targetEl.classList.add("svg-pulse");
       break;
 
-    case "highlight":[cite: 2]
+    case "highlight":
     default:
       targetEl.style.display = "";
       targetEl.classList.add("svg-highlight");
@@ -340,7 +333,7 @@ function applyAnimationStep(stepData) {
 
 function playAnimation(steps, playButton) {
   state.isPlaying = true;
-  playButton.textContent = "⏸ Pause";[cite: 2]
+  playButton.textContent = "⏸ Pause";
 
   const advance = () => {
     if (!state.isPlaying) return;
@@ -362,7 +355,7 @@ function playAnimation(steps, playButton) {
 
 function pauseAnimation(playButton) {
   state.isPlaying = false;
-  if (playButton) playButton.textContent = "▶ Play";[cite: 2]
+  if (playButton) playButton.textContent = "▶ Play";
   if (state.animationTimer) clearTimeout(state.animationTimer);
 }
 
@@ -375,18 +368,15 @@ function clearSvgEffects() {
   });
 }
 
-// ============================================================================
-// TEMPLATE 3: Process Sequence Builder (Keyboard Accessible)[cite: 2]
-// ============================================================================
+// TEMPLATE 3: Process Sequence Builder
 function initSequenceBuilder(container) {
-  const sequences = state.config.sequences || [
-    { item_id: "seq-1", label: "Deoxygenated blood enters Right Atrium", expected_order: 1, feedback: "Blood always enters the right atrium first from the vena cava." },[cite: 2]
-    { item_id: "seq-2", label: "Blood flows through Tricuspid Valve to Right Ventricle", expected_order: 2, feedback: "The tricuspid valve leads into the right ventricular chamber." },[cite: 2]
-    { item_id: "seq-3", label: "Right Ventricle pumps blood to Pulmonary Artery", expected_order: 3, feedback: "Deoxygenated blood travels via the pulmonary artery toward the lungs." },[cite: 2]
-    { item_id: "seq-4", label: "Oxygenated blood returns via Pulmonary Veins to Left Atrium", expected_order: 4, feedback: "Freshly oxygenated blood returns through pulmonary veins into the left atrium." }[cite: 2]
+  const sequences = (state.config && state.config.sequences) || [
+    { item_id: "seq-1", label: "Deoxygenated blood enters Right Atrium", expected_order: 1, feedback: "Blood always enters the right atrium first from the vena cava." },
+    { item_id: "seq-2", label: "Blood flows through Tricuspid Valve to Right Ventricle", expected_order: 2, feedback: "The tricuspid valve leads into the right ventricular chamber." },
+    { item_id: "seq-3", label: "Right Ventricle pumps blood to Pulmonary Artery", expected_order: 3, feedback: "Deoxygenated blood travels via the pulmonary artery toward the lungs." },
+    { item_id: "seq-4", label: "Oxygenated blood returns via Pulmonary Veins to Left Atrium", expected_order: 4, feedback: "Freshly oxygenated blood returns through pulmonary veins into the left atrium." }
   ];
 
-  // Initialize with shuffled order for learning challenge
   state.userSequence = [...sequences].sort(() => Math.random() - 0.5);
 
   const wrapper = document.createElement("div");
@@ -417,7 +407,7 @@ function initSequenceBuilder(container) {
     for (let i = 0; i < state.userSequence.length; i++) {
       if (state.userSequence[i].expected_order !== i + 1) {
         isCorrect = false;
-        feedbackText = `Not quite. Examine step ${i + 1}: "${state.userSequence[i].label}". ${state.userSequence[i].feedback}`;[cite: 2]
+        feedbackText = `Not quite. Examine step ${i + 1}: "${state.userSequence[i].label}". ${state.userSequence[i].feedback}`;
         break;
       }
     }
@@ -441,16 +431,15 @@ function renderSequenceList(container) {
     const controls = document.createElement("div");
     controls.className = "sequence-controls";
 
-    // Non-pointer Move Up / Move Down buttons for complete keyboard accessibility[cite: 2]
     const moveUpBtn = document.createElement("button");
     moveUpBtn.type = "button";
-    moveUpBtn.textContent = "▲ Move Up";[cite: 2]
+    moveUpBtn.textContent = "▲ Move Up";
     moveUpBtn.disabled = index === 0;
     moveUpBtn.setAttribute("aria-label", `Move ${item.label} up`);
 
     const moveDownBtn = document.createElement("button");
     moveDownBtn.type = "button";
-    moveDownBtn.textContent = "▼ Move Down";[cite: 2]
+    moveDownBtn.textContent = "▼ Move Down";
     moveDownBtn.disabled = index === state.userSequence.length - 1;
     moveDownBtn.setAttribute("aria-label", `Move ${item.label} down`);
 
@@ -474,7 +463,7 @@ function renderSequenceList(container) {
   });
 }
 
-// 6. Utility: Announce State Changes to Screen Reader Live Region[cite: 2]
+// 6. Utility: Screen Reader Announcements
 function announceStatus(message) {
   const announcer = document.getElementById("status-announcer");
   if (announcer) {
@@ -482,5 +471,4 @@ function announceStatus(message) {
   }
 }
 
-// Initialize application when DOM is ready
 document.addEventListener("DOMContentLoaded", initInteractiveApp);
