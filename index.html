@@ -5,16 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Interactive Scientific Illustration</title>
   <style>
-    body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.5; padding: 16px; margin: 0 auto; max-width: 1000px; }
     .toggles { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
-    .toggle-btn { padding: 8px 12px; cursor: pointer; min-height: 44px; min-width: 44px; font-size: 0.95rem; }
+    .toggle-btn { padding: 8px 12px; cursor: pointer; min-height: 44px; min-width: 44px; }
     .toggle-btn[aria-pressed="false"] { opacity: 0.5; text-decoration: line-through; }
     .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0; }
     #svg-container svg { max-width: 100%; height: auto; display: block; }
-    
-    /* Preserve Illustrator text-anchor alignment across sub-elements */
-    #svg-container svg g[id^="Label_"] text { text-anchor: inherit; }
-    #svg-container svg g[id^="Label_"] tspan { text-anchor: inherit; }
   </style>
 </head>
 <body>
@@ -25,24 +20,24 @@
   </header>
 
   <p id="label-instructions">
-    Use the buttons below to toggle anatomical labels and control interactions.
+    Use the controls below to interact with the anatomical illustration.
   </p>
 
-  <!-- Parallel HTML Control Panel -->
+  <!-- Parallel HTML Toolbar for Accessibility -->
   <div class="toggles" 
        role="toolbar" 
-       aria-label="Illustration controls" 
+       aria-label="Illustration interactive controls" 
        aria-describedby="label-instructions" 
        id="toolbar-container">
     <span id="loading-message">Loading activity data…</span>
   </div>
 
-  <!-- Dynamic SVG Container -->
+  <!-- Dynamic SVG Target Container -->
   <main id="svg-container" aria-live="polite">
     <!-- SVG markup injected here at runtime -->
   </main>
 
-  <!-- Screen Reader Announcements -->
+  <!-- Screen Reader Live Region Announcements -->
   <div id="status-announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
 
   <script src="app.js"></script>
