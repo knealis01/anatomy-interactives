@@ -1,43 +1,146 @@
-Interactive SVG Course Toolkit: Complete Project Progress & Architecture Documentation1. Executive Architecture OverviewThe Interactive SVG Course Toolkit is a configuration-driven authoring system designed to convert static scientific vector illustrations into accessible, interactive learning activities for ebooks and learning management systems (LMS).   Decoupled Asset Architecture: SVG vector graphics live as standalone, clean files in assets/prepared/ rather than embedded in index.html or stored inside spreadsheet cells.   Single Front-End Engine Shell: A generic web shell (index.html + app.js) dynamically renders illustrations and interactive modes based on URL query parameters (e.g., index.html?diagram=heart&mode=layer-explorer&lang=es).   Centralized Google Sheets Database: A single Google Sheet (Astra_Github_SVG_V2) acts as the authoring database and API endpoint, storing metadata, localized labels, animation sequences, and step feedback linked by diagram_id.   WCAG 2.2 Level AA Compliance: All pointer/drag operations have full keyboard alternatives, screen reader announcements via live regions, high-contrast visual states, and reduced-motion overrides.   2. Directory & Repository LayoutThe local development directory and GitHub repository mirror the following layout:   Plaintextinteractive-course-toolkit/
-├── .gitignore                         <-- Excludes OS files, node_modules, and logs
-├── index.html                         <-- Reusable accessible HTML application shell
-├── app.js                             <-- Interaction engine, template router & cache manager
+# Interactive SVG Course Toolkit — Architecture & Progress
+
+## 1. Executive Overview
+
+A configuration-driven authoring system that turns static scientific vector illustrations into accessible, interactive learning activities.
+
+- **Decoupled asset architecture** — SVGs live as standalone files in `assets/prepared/`, not embedded in `index.html` or stored in spreadsheet cells.
+- **Single front-end engine shell** — `index.html` + `app.js` dynamically render any illustration and any interactive mode based on URL query parameters (e.g. `index.html?diagram=heart&mode=layer-explorer&lang=es`).
+- **Centralized Google Sheet** acts as the authoring database and API endpoint (via an Apps Script web app), storing metadata, localized labels, animation/reveal sequences, all keyed by `diagram_id`.
+- **Bilingual (EN/ES)** — a Language toggle in the page itself re-fetches Sheet data and rebuilds the active activity in place, no reload. Sheet-authored content (labels, diagram title/description) is looked up per-language from the Sheet; fixed UI chrome (button labels, instructions, banners) is localized via a small in-code dictionary, since it isn't spreadsheet content.
+- **WCAG 2.2 AA-oriented** — every pointer-driven interaction has a keyboard-operable HTML control, `aria-live` announcements, visible focus states, and a Reduce Motion toggle.
+
+## 2. Directory & Repository Layout
+
+```
+anatomy-interactives/
+├── index.html                # Generic, reusable HTML shell — no diagram-specific markup
+├── app.js                    # Interaction engine: diagram/mode router, activities, i18n, cache
 ├── assets/
-│   ├── source/                        <-- Raw vector exports from Illustrator/Inkscape
-│   ├── prepared/                      <-- Optimized SVG assets loaded at runtime
-│   └── manifests/                     <-- Generated element JSON metadata manifests
-├── backend/
-│   └── Code.gs                        <-- Backup copy of Google Apps Script backend[cite: 1]
+│   ├── source/                # Raw SVG exports from Illustrator (input to the pipeline)
+│   ├── prepared/               # Cleaned/optimized SVGs actually fetched at runtime
+│   └── manifests/              # Generated per-diagram element-id JSON (diagnostic/reference)
 └── tools/
     └── prepare-svg/
-        └── index.js                   <-- Node.js SVG cleaning & manifest extraction tool
-3. Database & Google Sheet Schema (Astra_Github_SVG_V2)The Google Sheet acts as the content management system. Rows are filtered by diagram_id (e.g., heart).   Core Tabs & Column Headerslabels TabStores text callouts, tooltips, localized translations, and initial visibility states.   Columns: diagram_id | svg_id | en_text | es_text | visible_default | tooltip_en   diagram_meta TabStores localized titles and long accessible descriptions.   Columns: diagram_id | lang | title | desc   elements TabTracks animatable anatomical paths and structural SVG element groups.   Columns: asset_id | element_id | accessible_name | layer | interactive   animations TabDefines step-by-step keyframe actions, timings, and captions for the Animated Layer Explorer.   Columns: activity_id | step_id | order | element_id | action | duration | caption   sequences TabControls stage ordering and descriptive feedback for the Process Sequence Builder[cite: 2].Columns: activity_id | item_id | expected_order | caption | feedback[cite: 2]svg_raw & imported_labels TabsUtility tabs used by the Google Apps Script function importLabelsFromSvg() to extract group IDs and text directly from pasted raw SVG code.   4. Technical Artifacts & Source CodeA. Node.js SVG Optimizer (tools/prepare-svg/index.js)Strips editor metadata, validates viewBox attributes, flags inline <script> security risks or duplicate IDs, writes optimized vectors to assets/prepared/, and extracts structural manifests to assets/manifests/[cite: 2].JavaScriptconst fs = require('fs');
+        └── index.js            # Node.js SVG cleaner + manifest extractor
+```
+
+**Note on the Apps Script backend:** the Google Apps Script project (`Code.gs`) that serves the Sheet as a JSON API is **not stored in this repository** — it's a separate deployment bound to the Google Sheet itself. A working copy is kept locally at `~/Desktop/code.gs` for editing; see Section 4D for its current content and the deploy workflow in Section 6.
+
+## 3. Google Sheet Schema
+
+Every tab is filtered by `diagram_id` (e.g. `heart`) so one Sheet can drive multiple illustrations.
+
+### `labels` tab — Label Studio (show/hide + text)
+| Column | Notes |
+|---|---|
+| `diagram_id` | e.g. `heart` |
+| `svg_id` | must exactly match an SVG element id, e.g. `Label_Aorta` |
+| `en_text` | English caption |
+| `es_text` | Spanish caption (falls back to `en_text` if blank) |
+| `visible_default` | `TRUE`/`FALSE` |
+| `tooltip_en` | optional hover/aria tooltip |
+| `text_align` | optional; `right` for labels whose leader line sits to their right — see Section 4C, `patchLabelText()` |
+
+### `diagram_meta` tab — page title/description
+| Column | Notes |
+|---|---|
+| `diagram_id` | e.g. `heart` |
+| `lang` | `en` / `es` — one row per language per diagram |
+| `title` | shown in the page `<h1>` |
+| `desc` | shown under the title, also read by screen readers via `aria-labelledby` on the SVG |
+
+### `animations` tab — Layer Explorer (Play/Pause/Prev/Next scrubber)
+| Column | Notes |
+|---|---|
+| `activity_id` | `diagram_id` (falls back to `diagram_id` column if `activity_id` is absent) |
+| `step_id` | any unique label |
+| `order` | 1, 2, 3… playback order |
+| `element_id` | must exactly match an SVG element id |
+| `action` | `highlight` \| `pulse` \| `fade-in` |
+| `duration` | milliseconds |
+| `caption` | narration shown/announced for that step |
+
+### `sequences` tab — Sequence Builder (one-pass, button-triggered layer reveal)
+| Column | Notes |
+|---|---|
+| `activity_id` | `diagram_id` |
+| `item_id` | **must hold the real SVG element id** (e.g. `Label_Right_atrium`) — this tab has no dedicated `element_id` column, so `item_id` doubles as the target |
+| `expected_order` | 1, 2, 3… reveal order |
+| `caption` | narration shown/announced when that layer is revealed |
+| `feedback` | unused by the current (v2) reveal activity; safe to leave blank |
+
+### `svg_raw` / `imported_labels` / `svg_element_ids` — authoring helper tabs
+Used by two Apps Script menu functions (Section 4D):
+- **Import labels from SVG** — paste raw SVG into `svg_raw!A1`, run the menu item, get `en_text | svg_id | visible_default` rows dumped into `imported_labels` to copy into `labels` (review manually — `diagram_id`/`es_text`/`tooltip_en`/`text_align` can't be scraped from the SVG and must be filled in by hand).
+- **List all element ids from SVG** — same `svg_raw` source, dumps every element id found (not just `Label_*`) into `svg_element_ids` as a copy-paste reference when filling in `element_id`/`item_id` for `animations`/`sequences`, to avoid typos.
+
+## 4. Technical Artifacts & Source Code
+
+### A. SVG Optimizer (`tools/prepare-svg/index.js`)
+
+Strips editor cruft, validates `viewBox`, flags inline `<script>`/duplicate-id/external-resource risks, and — importantly — **auto-repairs missing generic font-family fallbacks**. Illustrator exports name an exact (often subsetted/licensed) font with no generic fallback; when that exact font isn't installed in a visitor's browser, the browser silently falls through to its own default font (serif, in most browsers) regardless of what the artwork intended. `ensureGenericFontFallback()` detects any `font-family` rule missing a generic keyword and appends a matching one (`serif`/`sans-serif`/`monospace`, inferred from the named font), so a missing exact font degrades to something that still resembles the original design.
+
+```javascript
+const fs = require('fs');
 const path = require('path');
 
+// Folder Paths
 const SOURCE_DIR = path.join(__dirname, '../../assets/source');
 const PREPARED_DIR = path.join(__dirname, '../../assets/prepared');
 const MANIFEST_DIR = path.join(__dirname, '../../assets/manifests');
 
+// Ensure output directories exist automatically
 [PREPARED_DIR, MANIFEST_DIR].forEach((dir) => {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
 });
 
+// Illustrator export bakes in the exact (often subsetted/licensed) font name
+// with no generic fallback. When that exact font isn't installed in a
+// visitor's browser, CSS falls through to the browser's own default font —
+// serif in most browsers — silently overriding whatever the artwork actually
+// intended. This appends a matching generic family (serif/sans-serif/
+// monospace) to any font-family rule that doesn't already declare one, so
+// the fallback still resembles the original design instead of the browser's
+// arbitrary default.
+function ensureGenericFontFallback(svgContent, issues) {
+  const genericKeywordPattern = /\b(serif|sans-serif|monospace|cursive|fantasy|system-ui)\b/i;
+
+  return svgContent.replace(/font-family:\s*([^;]+);/g, (match, familyList) => {
+    if (genericKeywordPattern.test(familyList)) return match; // already has a fallback
+
+    const lower = familyList.toLowerCase();
+    let generic = 'sans-serif';
+    if (/times|georgia|garamond|palatino|cambria|book antiqua|serif/.test(lower)) {
+      generic = 'serif';
+    } else if (/courier|consolas|monospace|\bmono\b/.test(lower)) {
+      generic = 'monospace';
+    }
+
+    if (issues) issues.push(`INFO: Added missing generic font fallback (${generic}) to: ${familyList.trim()}`);
+    return `font-family: ${familyList.trim()}, ${generic};`;
+  });
+}
+
 function cleanAndOptimizeSvg(svgContent, assetId) {
   const issues = [];
-  
+
+  // 1. Check and preserve viewBox
   const viewBoxMatch = svgContent.match(/viewBox="([^"]+)"/i);
   if (!viewBoxMatch) {
     issues.push('WARNING: No viewBox attribute found on root <svg> element!');
   }
   const viewBoxValues = viewBoxMatch ? viewBoxMatch[1].split(' ').map(Number) : [0, 0, 800, 600];
 
+  // 2. Flag inline scripts or external resource references
   if (/<script/i.test(svgContent)) issues.push('SECURITY ALERT: Inline <script> tag detected!');
   if (/xlink:href="http/i.test(svgContent) || /href="http/i.test(svgContent)) {
     issues.push('WARNING: External HTTP resource link found.');
   }
 
+  // 3. Extract and check element IDs
   const idRegex = /id="([^"]+)"/g;
   const foundIds = new Set();
   const duplicateIds = new Set();
@@ -56,16 +159,20 @@ function cleanAndOptimizeSvg(svgContent, assetId) {
     issues.push(`ERROR: Duplicate IDs found: ${Array.from(duplicateIds).join(', ')}`);
   }
 
+  // 4. Perform SVG cleaning
   let cleaned = svgContent
-    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<!--[\s\S]*?-->/g, '') // remove XML comments
     .replace(/xmlns:i="[^"]*"/g, '')
     .replace(/xmlns:graph="[^"]*"/g, '')
     .replace(/i:extruder="[^"]*"/g, '')
-    .replace(/data-name="[^"]*"/g, '')
-    .replace(/<metadata[\s\S]*?<\/metadata>/gi, '')
-    .replace(/\s+/g, ' ')
+    .replace(/data-name="[^"]*"/g, '') // remove Adobe data-name tags
+    .replace(/<metadata[\s\S]*?<\/metadata>/gi, '') // remove metadata elements
+    .replace(/\s+/g, ' ') // normalize whitespace
     .trim();
 
+  cleaned = ensureGenericFontFallback(cleaned, issues);
+
+  // 5. Build Compact Element Manifest
   const elements = [];
   foundIds.forEach((id) => {
     let type = 'generic';
@@ -95,13 +202,13 @@ function cleanAndOptimizeSvg(svgContent, assetId) {
 
 function processAllSvgs() {
   if (!fs.existsSync(SOURCE_DIR)) {
-    console.log(`Source directory '${SOURCE_DIR}' does not exist.`);
+    console.log(`Source directory '${SOURCE_DIR}' does not exist. Please create it and add raw SVG files.`);
     return;
   }
 
   const files = fs.readdirSync(SOURCE_DIR).filter(f => f.endsWith('.svg'));
   if (files.length === 0) {
-    console.log(`No .svg files found in '${SOURCE_DIR}'.`);
+    console.log(`No .svg files found in '${SOURCE_DIR}'. Place your raw heart.svg inside 'assets/source/'.`);
     return;
   }
 
@@ -111,108 +218,352 @@ function processAllSvgs() {
     const preparedPath = path.join(PREPARED_DIR, `${assetId}.svg`);
     const manifestPath = path.join(MANIFEST_DIR, `${assetId}.json`);
 
-    console.log(`Processing: ${file}...`);
+    console.log(`\nProcessing: ${file}...`);
     const rawSvg = fs.readFileSync(sourcePath, 'utf8');
     const { cleanedSvg, manifest, issues } = cleanAndOptimizeSvg(rawSvg, assetId);
 
+    // Save cleaned file and manifest
     fs.writeFileSync(preparedPath, cleanedSvg, 'utf8');
     fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
 
     console.log(` Saved optimized SVG to: assets/prepared/${assetId}.svg`);
     console.log(` Saved element manifest to: assets/manifests/${assetId}.json`);
-    
+
     if (issues.length > 0) {
+      console.log(' Diagnostics:');
       issues.forEach(i => console.log(`   - ${i}`));
     }
   });
 }
 
 processAllSvgs();
-B. Application Web Shell (index.html)Provides accessible containers, landmark structures, toolbar wrappers, and an aria-live region[cite: 2, 3].HTML<!doctype html>
+```
+
+**Illustrator export settings** that pair with this pipeline (see Section 6 for the full checklist): Styling → Internal CSS ("Style Elements"); Font → SVG (not "Convert to Outlines" — label captions must stay real `<text>` for the patching logic below to work); Object IDs → Layer Names; Responsive → on.
+
+### B. Application Shell (`index.html`)
+
+Purely structural — no diagram-specific markup, no embedded SVG. `app.js` injects the SVG into `#svg-container` and builds the toolbar into `#toolbar-container` at runtime based on `?diagram=` and `?mode=`.
+
+```html
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <!-- PERFORMANCE HINTS -->
+  <link rel="preconnect" href="https://script.google.com">
+  <link rel="dns-prefetch" href="https://script.google.com">
   <title>Interactive Scientific Illustration</title>
+
   <style>
-    .toggles { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
-    .toggle-btn { padding: 8px 12px; cursor: pointer; min-height: 44px; min-width: 44px; }
-    .toggle-btn[aria-pressed="false"] { opacity: 0.5; text-decoration: line-through; }
-    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0; }
-    #svg-container svg { max-width: 100%; height: auto; display: block; }
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      margin: 1.5rem;
+      background: #ffffff;
+    }
+
+    .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0,0,0,0);
+    border: 0;
+    }
+
+
+    .diagram-wrap {
+      border: 1px solid #ccc;
+      padding: 1rem;
+      border-radius: .75rem;
+      background: #fafafa;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      font-size: 1.25rem;
+      margin-top: 0;
+    }
+
+    #label-instructions {
+      font-size: 0.95rem;
+      color: #374151;
+      margin-bottom: 0.75rem;
+    }
+
+    .lang-toggle {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .lang-toggle button {
+      padding: 0.3rem 0.6rem;
+      border-radius: 0.4rem;
+      border: 1px solid #bbb;
+      background: #ffffff;
+      cursor: pointer;
+      font-size: 0.85rem;
+      min-height: 36px;
+    }
+
+    .lang-toggle button[aria-pressed="true"] {
+      background: #e8e8e8;
+      font-weight: 600;
+    }
+
+    .toggles {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+    }
+
+    .toggles button {
+      padding: 0.4rem 0.6rem;
+      border-radius: 0.4rem;
+      border: 1px solid #bbb;
+      background: #ffffff;
+      cursor: pointer;
+      font-size: 0.9rem;
+      min-height: 44px;
+      min-width: 44px;
+    }
+
+    .toggles button[aria-pressed="true"] {
+      background: #e8e8e8;
+      font-weight: 600;
+    }
+
+    .toggles button[aria-pressed="false"] {
+      opacity: 0.6;
+    }
+
+    .toggles button:focus-visible {
+      outline: 2px solid #2563eb;
+      outline-offset: 2px;
+    }
+
+    svg {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+
+    .is-hidden {
+      display: none;
+    }
+
+    .label-bg {
+      fill: white;
+      stroke: #000;
+      stroke-width: 1;
+    }
+
+    .label {
+      font-family: system-ui, sans-serif;
+      font-weight: 600;
+    }
+
+    #loading-message {
+    font-size: 0.9rem;
+    color: #6b7280; /* subtle gray */
+    animation: pulse 1.2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+    0%   { opacity: 0.4; }
+    50%  { opacity: 1; }
+    100% { opacity: 0.4; }
+    }
+
+    .load-error {
+      font-size: 0.9rem;
+      color: #7a2e00;
+      background: #fff3e0;
+      border: 1px solid #f0c38a;
+      border-radius: 0.5rem;
+      padding: 0.5rem 0.75rem;
+      margin-bottom: 0.75rem;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .load-error:not([hidden]) {
+      display: flex;
+    }
+
+    .load-error button {
+      border: 1px solid #b06a1a;
+      background: #fff;
+      border-radius: 0.4rem;
+      padding: 0.25rem 0.6rem;
+      cursor: pointer;
+      min-height: 32px;
+    }
+
   </style>
 </head>
 <body>
+  <div id="sr-status" aria-live="polite" class="sr-only"></div>
 
-  <header>
-    <h1 id="diagram-title">Loading illustration…</h1>
-    <p id="diagram-desc"></p>
-  </header>
+  <div class="diagram-wrap">
+    <div class="lang-toggle" role="group" aria-label="Language" id="lang-toggle"></div>
 
-  <p id="label-instructions">
-    Use the controls below to interact with the anatomical illustration.
-  </p>
+    <header>
+      <h1 id="diagram-title">Loading illustration…</h1>
+      <p id="diagram-desc"></p>
+    </header>
 
-  <!-- Parallel HTML Toolbar for Accessibility -->
-  <div class="toggles" 
-       role="toolbar" 
-       aria-label="Illustration interactive controls" 
-       aria-describedby="label-instructions" 
-       id="toolbar-container">
-    <span id="loading-message">Loading activity data…</span>
+    <p id="label-instructions">
+      Use the controls below to interact with the anatomical illustration.
+    </p>
+
+    <p id="load-error" class="load-error" hidden>
+      <span id="load-error-message">Couldn't load the latest activity data from the Sheet. Showing default content instead.</span>
+      <button type="button" id="retry-load">Retry</button>
+    </p>
+
+    <!-- Parallel HTML toolbar for accessibility; populated by app.js based on ?mode= -->
+    <div class="toggles"
+         role="toolbar"
+         aria-label="Illustration interactive controls"
+         aria-describedby="label-instructions"
+         id="toolbar-container">
+      <span id="loading-message">Loading activity data…</span>
+    </div>
+
+    <!-- Dynamic SVG target; app.js injects ./assets/prepared/{diagram}.svg here at runtime -->
+    <main id="svg-container" aria-live="polite"></main>
   </div>
-
-  <!-- Dynamic SVG Target Container -->
-  <main id="svg-container" aria-live="polite">
-    <!-- SVG markup injected here at runtime -->
-  </main>
-
-  <!-- Screen Reader Live Region Announcements -->
-  <div id="status-announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
 
   <script src="app.js"></script>
 </body>
 </html>
-```[cite: 2, 3]
+```
 
----
+Note on the `.load-error:not([hidden])` rule: a plain `.load-error { display: flex; }` rule always beats the browser's built-in `[hidden] { display: none; }` regardless of the `hidden` attribute, because author-stylesheet rules always win over user-agent rules at equal specificity. Scoping the `display: flex` to `:not([hidden])` was the fix for a bug where the error banner stayed visible on every successful load.
 
-### C. Interaction Engine & Front-End Router (`app.js`)
+### C. Interaction Engine (`app.js`)
 
-Manages dynamic asset loading, browser-level `localStorage` caching, template rendering, and accessibility controls.
+Three activity modes, chosen via `?mode=`:
+- **`label-studio`** (default) — per-label show/hide toggle buttons, built from live `[id^="Label_"]` elements in the SVG, patched with Sheet-provided text/tooltip/visibility. Includes a "Toggle All" button.
+- **`layer-explorer`** — Play/Pause/Prev/Next scrubber through `animations` tab steps, each step running a `highlight`/`pulse`/`fade-in` action on one SVG element. Supports Reduce Motion.
+- **`sequence-builder`** — one-pass, button-triggered reveal through `sequences` tab steps: every target layer starts hidden, a single "Reveal Next" button reveals them one at a time in order, no autoplay timer, and it stops for good (button disables) once the last step is revealed. A separate Restart button is the only way back to the start.
 
 ```javascript
 /**
  * Interactive SVG Course Engine & Activity Toolkit
- * Activity Modes: Label Studio, Animated Layer Explorer, Process Sequence Builder[cite: 2]
+ * Activity Modes: Label Studio, Animated Layer Explorer, Process Sequence Builder
  * Performance: Stale-While-Revalidate Browser Caching (localStorage)
- * Standards Target: WCAG 2.2 Level AA Accessibility[cite: 2]
+ * Standards Target: WCAG 2.2 Level AA Accessibility
  */
 
-const APPS_SCRIPT_URL = "https://script.google.com/macros/s/YOUR_DEPLOYMENT_ID/exec";
+// 1. Configuration & URL Parameters
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbydklwxJqBkiheXsdKAF8E_YBvMYEcePkkXYtAKy4h6S_BP8W5hAFpYyM5UVctUM7qE/exec";
 
 const urlParams = new URLSearchParams(window.location.search);
-const diagramId = (urlParams.get("diagram") || "heart").toLowerCase();[cite: 1]
-const activeMode = (urlParams.get("mode") || "layer-explorer").toLowerCase();[cite: 2]
-const lang = (urlParams.get("lang") || "en").toLowerCase();[cite: 1]
+const diagramId = (urlParams.get("diagram") || "heart").toLowerCase();
+const activeMode = (urlParams.get("mode") || "label-studio").toLowerCase(); // 'label-studio' | 'layer-explorer' | 'sequence-builder'
+let lang = (urlParams.get("lang") || "en").toLowerCase(); // mutable — the language toggle reassigns this
 
+// Fixed UI chrome text (buttons, instructions, banners) isn't Sheet-authored
+// content, so it lives here rather than in a spreadsheet column. Diagram
+// titles/descriptions (diagram_meta) and label text (labels) still come
+// from the Sheet per-language, same as before.
+const UI_STRINGS = {
+  en: {
+    instructions: "Use the controls below to interact with the anatomical illustration.",
+    loading: "Loading activity data…",
+    loadError: "Couldn't load the latest activity data from the Sheet. Showing default content instead.",
+    retry: "Retry",
+    toggleAll: "Toggle All",
+    labelShown: (name) => `${name} label shown.`,
+    labelHidden: (name) => `${name} label hidden.`,
+    allShown: "All labels shown.",
+    allHidden: "All labels hidden.",
+    reduceMotion: "Reduce Motion",
+    motionEnabled: "Reduced motion enabled.",
+    motionDisabled: "Reduced motion disabled.",
+    prev: "⏮ Previous",
+    play: "▶ Play",
+    pause: "⏸ Pause",
+    next: "Next ⏭",
+    restart: "↺ Restart",
+    playbackComplete: "Sequence playback completed.",
+    revealNext: "Reveal Next ⏭",
+    sequenceComplete: "Sequence Complete",
+    sequenceCompleteAnnounce: "Sequence complete.",
+    sequenceReset: "Sequence reset.",
+    sequenceReady: (n) => `Ready — ${n} steps. Click "Reveal Next" to begin.`,
+    langEnglish: "English",
+    langSpanish: "Español",
+    langSwitched: "Switched to English.",
+    langSwitchFailed: "Could not load that language right now."
+  },
+  es: {
+    instructions: "Usa los controles a continuación para interactuar con la ilustración anatómica.",
+    loading: "Cargando datos de la actividad…",
+    loadError: "No se pudieron cargar los datos más recientes de la hoja de cálculo. Mostrando contenido predeterminado.",
+    retry: "Reintentar",
+    toggleAll: "Alternar todo",
+    labelShown: (name) => `Etiqueta ${name} mostrada.`,
+    labelHidden: (name) => `Etiqueta ${name} ocultada.`,
+    allShown: "Todas las etiquetas mostradas.",
+    allHidden: "Todas las etiquetas ocultadas.",
+    reduceMotion: "Reducir movimiento",
+    motionEnabled: "Movimiento reducido activado.",
+    motionDisabled: "Movimiento reducido desactivado.",
+    prev: "⏮ Anterior",
+    play: "▶ Reproducir",
+    pause: "⏸ Pausar",
+    next: "Siguiente ⏭",
+    restart: "↺ Reiniciar",
+    playbackComplete: "Reproducción de la secuencia completada.",
+    revealNext: "Mostrar siguiente ⏭",
+    sequenceComplete: "Secuencia completa",
+    sequenceCompleteAnnounce: "Secuencia completa.",
+    sequenceReset: "Secuencia reiniciada.",
+    sequenceReady: (n) => `Listo — ${n} pasos. Haz clic en "Mostrar siguiente" para comenzar.`,
+    langEnglish: "English",
+    langSpanish: "Español",
+    langSwitched: "Cambiado a español.",
+    langSwitchFailed: "No se pudo cargar ese idioma en este momento."
+  }
+};
+
+function t(key) {
+  const dict = UI_STRINGS[lang] || UI_STRINGS.en;
+  return dict[key] !== undefined ? dict[key] : UI_STRINGS.en[key];
+}
+
+// 2. Application State Management
 const state = {
   config: null,
   svgElement: null,
+  // Layer Explorer State
   currentStepIndex: 0,
   isPlaying: false,
   playbackSpeed: 1.0,
   animationTimer: null,
-  isReducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches,[cite: 2]
-  userSequence: []
+  isReducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+  // Sequence Builder State
+  sequenceSteps: [],
+  // Language Toggle State
+  isSwitchingLanguage: false
 };
 
-// Stale-While-Revalidate Caching Helper
+// 3. Stale-While-Revalidate Caching Helper
 async function fetchWithCache(url, cacheKey) {
   const cached = localStorage.getItem(cacheKey);
   const isSvg = url.endsWith(".svg");
 
   if (cached) {
+    // Revalidate in background to keep data fresh without blocking UI
     fetch(url)
       .then((res) => (res.ok ? (isSvg ? res.text() : res.json()) : null))
       .then((freshData) => {
@@ -226,10 +577,15 @@ async function fetchWithCache(url, cacheKey) {
     if (isSvg) {
       return cached;
     } else {
-      try { return JSON.parse(cached); } catch (e) { return cached; }
+      try {
+        return JSON.parse(cached);
+      } catch (e) {
+        return cached;
+      }
     }
   }
 
+  // Network fetch if not cached
   const res = await fetch(url);
   if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
   const data = isSvg ? await res.text() : await res.json();
@@ -237,6 +593,7 @@ async function fetchWithCache(url, cacheKey) {
   return data;
 }
 
+// 4. Dynamic CSS Injection for SVG Animation & Focus States
 function injectAnimationStyles() {
   if (document.getElementById("svg-engine-styles")) return;
   const style = document.createElement("style");
@@ -247,127 +604,352 @@ function injectAnimationStyles() {
       filter: drop-shadow(0px 0px 8px rgba(0, 95, 204, 0.8));
       transition: filter 0.3s ease, stroke 0.3s ease;
     }
-    .svg-pulse { animation: svgPulseKeyframe 1.2s infinite ease-in-out; }
+    .svg-pulse {
+      animation: svgPulseKeyframe 1.2s infinite ease-in-out;
+    }
     @keyframes svgPulseKeyframe {
       0% { opacity: 1; transform: scale(1); }
       50% { opacity: 0.4; transform: scale(1.03); }
       100% { opacity: 1; transform: scale(1); }
     }
-    .svg-fade-transition { transition: opacity var(--anim-duration, 0.6s) ease-in-out; }
-    .sequence-item {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 10px 14px; margin-bottom: 8px; background: #f4f6f8;
-      border: 1px solid #ccc; border-radius: 4px;
+    .svg-fade-transition {
+      transition: opacity var(--anim-duration, 0.6s) ease-in-out;
     }
-    .sequence-controls button, .playback-controls button {
-      min-height: 44px; padding: 6px 12px; cursor: pointer;
+    .playback-controls {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
     }
-    .playback-controls { display: flex; gap: 8px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
-    .caption-box { padding: 12px 16px; background: #eef4fc; border-left: 4px solid #005fcc; margin-top: 12px; font-size: 1.05rem; }
+    .playback-controls button {
+      min-height: 44px;
+      padding: 8px 14px;
+      cursor: pointer;
+    }
+    .caption-box {
+      padding: 12px 16px;
+      background: #eef4fc;
+      border-left: 4px solid #005fcc;
+      margin-top: 12px;
+      font-size: 1.05rem;
+    }
   `;
   document.head.appendChild(style);
 }
 
-async function initInteractiveApp() {
-  injectAnimationStyles();
-  const toolbarContainer = document.getElementById("toolbar-container");[cite: 3]
-  const svgContainer = document.getElementById("svg-container");[cite: 3]
-  
-  try {
-    const svgKey = `cache_svg_${diagramId}`;
-    const apiKey = `cache_api_${diagramId}_${lang}`;
+// Applies the fixed UI chrome text (instructions, loading/error banners,
+// retry button) for the current `lang`. Sheet-authored content (labels,
+// diagram title/desc) is handled separately by applyDiagramMeta/patchLabelText.
+function applyStaticUiText() {
+  const instructions = document.getElementById("label-instructions");
+  if (instructions) instructions.textContent = t("instructions");
 
-    const [svgText, configData] = await Promise.all([
-      fetchWithCache(`./assets/prepared/${diagramId}.svg`, svgKey),[cite: 2]
-      fetchWithCache(`${APPS_SCRIPT_URL}?diagram=${diagramId}&lang=${lang}`, apiKey)[cite: 1]
-    ]);
+  const loadingMsg = document.getElementById("loading-message");
+  if (loadingMsg) loadingMsg.textContent = t("loading");
 
-    state.config = configData;
-    svgContainer.innerHTML = svgText;
-    state.svgElement = svgContainer.querySelector("svg");
+  const errorMsg = document.getElementById("load-error-message");
+  if (errorMsg) errorMsg.textContent = t("loadError");
 
-    if (state.config.meta) {
-      if (state.config.meta.title) document.getElementById("diagram-title").textContent = state.config.meta.title;[cite: 1]
-      if (state.config.meta.desc) document.getElementById("diagram-desc").textContent = state.config.meta.desc;[cite: 1]
-    }
+  const retryBtn = document.getElementById("retry-load");
+  if (retryBtn) retryBtn.textContent = t("retry");
+}
 
-    toolbarContainer.innerHTML = "";
-
-    switch (activeMode) {
-      case "label-studio":
-        initLabelStudio(toolbarContainer);
-        break;
-      case "sequence-builder":
-        initSequenceBuilder(toolbarContainer);
-        break;
-      case "layer-explorer":
-      default:
-        initLayerExplorer(toolbarContainer);
-        break;
-    }
-  } catch (error) {
-    console.error("Initialization Error:", error);
-    if (toolbarContainer) {
-      toolbarContainer.innerHTML = `<span style="color:#d32f2f;">Error loading activity: ${error.message}</span>`;
-    }
+// Clears and rebuilds the toolbar for the currently active mode, using
+// whatever's in state.config. Shared by initial load, the error fallback,
+// and language switches so the three don't drift out of sync.
+function renderActiveMode(container) {
+  container.innerHTML = "";
+  switch (activeMode) {
+    case "sequence-builder":
+      initSequenceBuilder(container);
+      break;
+    case "layer-explorer":
+      initLayerExplorer(container);
+      break;
+    case "label-studio":
+    default:
+      initLabelStudio(container);
+      break;
   }
 }
 
-// Template 1: Label Studio[cite: 2]
-function initLabelStudio(container) {
-  const labels = state.config.labels || [];[cite: 1]
-  if (labels.length === 0) {
-    container.innerHTML = "<span>No label definitions found.</span>";
+// 5. Main Application Initialization (Fault-Tolerant)
+async function initInteractiveApp() {
+  injectAnimationStyles();
+  applyStaticUiText();
+
+  const toolbarContainer = document.getElementById("toolbar-container");
+  const svgContainer = document.getElementById("svg-container");
+  const errorBox = document.getElementById("load-error");
+  const retryBtn = document.getElementById("retry-load");
+
+  if (errorBox) errorBox.hidden = true;
+  if (retryBtn && !retryBtn.dataset.wired) {
+    retryBtn.dataset.wired = "true";
+    retryBtn.addEventListener("click", initInteractiveApp);
+  }
+
+  const svgKey = `cache_svg_${diagramId}`;
+  const apiKey = `cache_api_${diagramId}_${lang}`;
+
+  // Step A: Load SVG Graphic independently so illustration renders immediately
+  try {
+    const svgText = await fetchWithCache(`./assets/prepared/${diagramId}.svg`, svgKey);
+    svgContainer.innerHTML = svgText;
+    state.svgElement = svgContainer.querySelector("svg");
+  } catch (svgError) {
+    console.error("SVG Asset Loading Error:", svgError);
+    svgContainer.innerHTML = `<p style="color:#d32f2f;">Failed to load illustration asset: assets/prepared/${diagramId}.svg</p>`;
     return;
   }
 
-  labels.forEach((label) => {
-    const targetGroup = document.getElementById(label.id);[cite: 1, 3]
-    const button = document.createElement("button");
-    button.className = "toggle-btn";
-    button.type = "button";
-    button.textContent = label.text;[cite: 1]
-    
-    let isVisible = label.visible !== false;[cite: 1]
-    button.setAttribute("aria-pressed", isVisible ? "true" : "false");
-    if (targetGroup) targetGroup.style.display = isVisible ? "" : "none";
+  // Step B: Load API Metadata concurrently with fallback handling
+  try {
+    const configData = await fetchWithCache(`${APPS_SCRIPT_URL}?diagram=${diagramId}&lang=${lang}`, apiKey);
+    state.config = configData;
+    applyDiagramMeta(state.config.meta);
+    renderActiveMode(toolbarContainer);
+    announceStatus("Activity data loaded and ready.");
+  } catch (apiError) {
+    console.warn("API Endpoint Warning (using default controls):", apiError);
+    // Fallback config if Apps Script API endpoint times out or is offline
+    state.config = state.config || {};
+    if (errorBox) errorBox.hidden = false;
+    announceStatus("Activity data unavailable; showing default content.");
+    renderActiveMode(toolbarContainer);
+  }
+}
 
-    button.addEventListener("click", () => {
-      isVisible = !isVisible;
-      button.setAttribute("aria-pressed", isVisible ? "true" : "false");
-      if (targetGroup) targetGroup.style.display = isVisible ? "" : "none";
-      announceStatus(`${label.text} label ${isVisible ? "shown" : "hidden"}.`);
+// 5b. Language Toggle (EN/ES) — refetches Sheet data for the new language
+// and rebuilds the active activity in place, no full page reload.
+async function setLanguage(newLang) {
+  if (newLang === lang || state.isSwitchingLanguage) return;
+  state.isSwitchingLanguage = true;
+
+  const toolbarContainer = document.getElementById("toolbar-container");
+
+  try {
+    lang = newLang;
+    applyStaticUiText();
+
+    const apiKey = `cache_api_${diagramId}_${lang}`;
+    const configData = await fetchWithCache(`${APPS_SCRIPT_URL}?diagram=${diagramId}&lang=${lang}`, apiKey);
+    state.config = configData;
+    applyDiagramMeta(state.config.meta);
+    renderActiveMode(toolbarContainer);
+    announceStatus(t("langSwitched"));
+
+    const url = new URL(window.location.href);
+    url.searchParams.set("lang", lang);
+    window.history.replaceState({}, "", url);
+  } catch (err) {
+    console.warn("Language switch failed:", err);
+    announceStatus(t("langSwitchFailed"));
+  } finally {
+    state.isSwitchingLanguage = false;
+    document.querySelectorAll("#lang-toggle button").forEach((btn) => {
+      btn.setAttribute("aria-pressed", btn.dataset.lang === lang ? "true" : "false");
     });
+  }
+}
 
-    container.appendChild(button);
+function initLanguageToggle() {
+  const host = document.getElementById("lang-toggle");
+  if (!host) return;
+
+  [
+    { code: "en", label: () => UI_STRINGS.en.langEnglish },
+    { code: "es", label: () => UI_STRINGS.es.langSpanish }
+  ].forEach(({ code, label }) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = label();
+    btn.dataset.lang = code;
+    btn.setAttribute("aria-pressed", code === lang ? "true" : "false");
+    btn.addEventListener("click", () => setLanguage(code));
+    host.appendChild(btn);
   });
 }
 
-// Template 2: Animated Layer Explorer[cite: 2]
+// Applies Sheet-provided title/description to both the HTML header and the
+// SVG's own <title>/<desc> so screen readers announce it via aria-labelledby.
+function applyDiagramMeta(meta) {
+  if (!meta) return;
+
+  if (meta.title) {
+    const titleHeader = document.getElementById("diagram-title");
+    if (titleHeader) titleHeader.textContent = meta.title;
+  }
+  if (meta.desc) {
+    const descHeader = document.getElementById("diagram-desc");
+    if (descHeader) descHeader.textContent = meta.desc;
+  }
+
+  const svg = state.svgElement;
+  if (!svg) return;
+
+  svg.setAttribute("role", "img");
+
+  let titleEl = svg.querySelector("title");
+  let descEl = svg.querySelector("desc");
+
+  if (!titleEl) {
+    titleEl = document.createElementNS("http://www.w3.org/2000/svg", "title");
+    titleEl.id = "svg-title";
+    svg.insertBefore(titleEl, svg.firstChild);
+  } else if (!titleEl.id) {
+    titleEl.id = "svg-title";
+  }
+
+  if (!descEl) {
+    descEl = document.createElementNS("http://www.w3.org/2000/svg", "desc");
+    descEl.id = "svg-desc";
+    svg.insertBefore(descEl, titleEl.nextSibling);
+  } else if (!descEl.id) {
+    descEl.id = "svg-desc";
+  }
+
+  if (meta.title) titleEl.textContent = meta.title;
+  if (meta.desc) descEl.textContent = meta.desc;
+
+  svg.setAttribute("aria-labelledby", `${titleEl.id} ${descEl.id}`);
+}
+
+// TEMPLATE 1: SVG Label Studio
+function initLabelStudio(container) {
+  const svg = state.svgElement;
+  const labelEls = svg ? Array.from(svg.querySelectorAll('[id^="Label_"]')) : [];
+
+  if (labelEls.length === 0) {
+    container.innerHTML = "<span>No Label_* groups found in this illustration.</span>";
+    return;
+  }
+
+  // Index Sheet-provided label data (text, tooltip, default visibility) by svg id.
+  const dataById = {};
+  ((state.config && state.config.labels) || []).forEach((item) => {
+    if (item.id) dataById[item.id] = item;
+  });
+
+  // Build buttons in randomized order so the toolbar doubles as a light
+  // "name the structure" quiz rather than mirroring the SVG's draw order.
+  const shuffled = [...labelEls];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+
+  const buttons = [];
+
+  shuffled.forEach((el) => {
+    const info = dataById[el.id];
+    const fallbackName = el.id.replace(/^Label_/, "").replace(/_/g, " ");
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "toggle-btn";
+    button.dataset.target = el.id;
+    button.setAttribute("aria-controls", el.id);
+
+    const isVisible = info ? info.visible !== false : !el.classList.contains("is-hidden");
+    button.setAttribute("aria-pressed", isVisible ? "true" : "false");
+    button.textContent = info && info.text ? info.text.replace(/\r?\n/g, " ") : fallbackName;
+
+    // Measure/patch text before toggling visibility — getBBox() (used for
+    // right-aligned labels below) returns a zeroed box on a hidden element.
+    patchLabelText(el, info);
+    el.classList.toggle("is-hidden", !isVisible);
+    if (info && info.tooltip) {
+      el.setAttribute("aria-label", info.tooltip);
+      el.setAttribute("title", info.tooltip);
+    }
+
+    button.addEventListener("click", () => {
+      const hidden = el.classList.toggle("is-hidden");
+      button.setAttribute("aria-pressed", hidden ? "false" : "true");
+      announceStatus(hidden ? t("labelHidden")(button.textContent) : t("labelShown")(button.textContent));
+    });
+
+    container.appendChild(button);
+    buttons.push(button);
+  });
+
+  const allButton = document.createElement("button");
+  allButton.type = "button";
+  allButton.id = "toggle-all";
+  allButton.textContent = t("toggleAll");
+  allButton.setAttribute("aria-pressed", "false");
+  allButton.addEventListener("click", () => {
+    const anyVisible = labelEls.some((el) => !el.classList.contains("is-hidden"));
+    labelEls.forEach((el) => el.classList.toggle("is-hidden", anyVisible));
+    buttons.forEach((b) => b.setAttribute("aria-pressed", anyVisible ? "false" : "true"));
+    allButton.setAttribute("aria-pressed", anyVisible ? "false" : "true");
+    announceStatus(anyVisible ? t("allHidden") : t("allShown"));
+  });
+  container.appendChild(allButton);
+}
+
+// Replaces a label group's <text> content with Sheet-provided text, wrapping
+// multi-line entries in <tspan>s. Labels flagged align:"right" (Sheet column
+// `text_align`) measure their original, as-drawn right edge via getBBox()
+// before the swap and re-anchor there with text-anchor:end, so replacement
+// text of any length grows leftward — away from a leader line on the right —
+// instead of growing rightward over it.
+function patchLabelText(el, info) {
+  if (!info || !info.text) return;
+  const textNode = el.querySelector("text");
+  if (!textNode) return;
+
+  const alignEnd = info.align === "right";
+  let anchorX = textNode.getAttribute("x") || "0";
+
+  if (alignEnd) {
+    const bbox = textNode.getBBox();
+    anchorX = bbox.x + bbox.width;
+    textNode.setAttribute("text-anchor", "end");
+  }
+
+  while (textNode.firstChild) textNode.removeChild(textNode.firstChild);
+
+  String(info.text).split(/\r?\n/).forEach((line, index) => {
+    const tspan = document.createElementNS("http://www.w3.org/2000/svg", "tspan");
+    tspan.textContent = line;
+    tspan.setAttribute("x", anchorX);
+    if (index === 0) {
+      tspan.setAttribute("y", textNode.getAttribute("y") || "0");
+    } else {
+      tspan.setAttribute("dy", "1em");
+    }
+    textNode.appendChild(tspan);
+  });
+}
+
+// TEMPLATE 2: Animated Layer Explorer
 function initLayerExplorer(container) {
-  const steps = state.config.animations || state.config.steps || [
-    { step_id: "step-1", order: 1, element_id: "Label_Right_atrium", action: "highlight", duration: 800, caption: "Deoxygenated blood enters the Right Atrium." },[cite: 2, 4]
-    { step_id: "step-2", order: 2, element_id: "Label_Right_ventricle", action: "pulse", duration: 1000, caption: "Blood flows down into the Right Ventricle." },[cite: 2, 4]
-    { step_id: "step-3", order: 3, element_id: "Label_Pulmonary_artery", action: "fade-in", duration: 700, caption: "Blood is pumped to the lungs through the Pulmonary Artery." },[cite: 2, 4]
-    { step_id: "step-4", order: 4, element_id: "Label_Aorta", action: "highlight", duration: 800, caption: "Oxygenated blood is distributed to the body via the Aorta." }[cite: 2, 4]
+  const steps = (state.config && (state.config.animations || state.config.steps)) || [
+    { step_id: "step-1", order: 1, element_id: "Label_Right_atrium", action: "highlight", duration: 800, caption: "Deoxygenated blood enters the Right Atrium." },
+    { step_id: "step-2", order: 2, element_id: "Label_Right_ventricle", action: "pulse", duration: 1000, caption: "Blood flows down into the Right Ventricle." },
+    { step_id: "step-3", order: 3, element_id: "Label_Pulmonary_artery", action: "fade-in", duration: 700, caption: "Blood is pumped to the lungs through the Pulmonary Artery." },
+    { step_id: "step-4", order: 4, element_id: "Label_Aorta", action: "highlight", duration: 800, caption: "Oxygenated blood is distributed to the body via the Aorta." }
   ];
 
   const controlsDiv = document.createElement("div");
   controlsDiv.className = "playback-controls";
   controlsDiv.innerHTML = `
-    <button type="button" id="btn-prev" aria-label="Previous step">⏮ Previous</button>
-    <button type="button" id="btn-play" aria-label="Play animation">▶ Play</button>
-    <button type="button" id="btn-next" aria-label="Next step">Next ⏭</button>
-    <button type="button" id="btn-restart" aria-label="Restart sequence">↺ Restart</button>
+    <button type="button" id="btn-prev">${t("prev")}</button>
+    <button type="button" id="btn-play">${t("play")}</button>
+    <button type="button" id="btn-next">${t("next")}</button>
+    <button type="button" id="btn-restart">${t("restart")}</button>
     <label style="margin-left:12px; cursor:pointer;">
-      <input type="checkbox" id="chk-reduced-motion" ${state.isReducedMotion ? "checked" : ""}> Reduce Motion
+      <input type="checkbox" id="chk-reduced-motion" ${state.isReducedMotion ? "checked" : ""}> ${t("reduceMotion")}
     </label>
-  `;[cite: 2]
+  `;
 
   const captionBox = document.createElement("div");
   captionBox.className = "caption-box";
   captionBox.id = "step-caption";
-  captionBox.setAttribute("aria-live", "polite");[cite: 2]
+  captionBox.setAttribute("aria-live", "polite");
 
   container.appendChild(controlsDiv);
   container.appendChild(captionBox);
@@ -380,21 +962,31 @@ function initLayerExplorer(container) {
 
   chkMotion.addEventListener("change", (e) => {
     state.isReducedMotion = e.target.checked;
-    announceStatus(`Reduced motion ${state.isReducedMotion ? "enabled" : "disabled"}.`);[cite: 2]
+    announceStatus(state.isReducedMotion ? t("motionEnabled") : t("motionDisabled"));
   });
 
   btnPlay.addEventListener("click", () => {
-    if (state.isPlaying) { pauseAnimation(btnPlay); } else { playAnimation(steps, btnPlay); }
+    if (state.isPlaying) {
+      pauseAnimation(btnPlay);
+    } else {
+      playAnimation(steps, btnPlay);
+    }
   });
 
   btnPrev.addEventListener("click", () => {
     pauseAnimation(btnPlay);
-    if (state.currentStepIndex > 0) { state.currentStepIndex--; applyAnimationStep(steps[state.currentStepIndex]); }
+    if (state.currentStepIndex > 0) {
+      state.currentStepIndex--;
+      applyAnimationStep(steps[state.currentStepIndex]);
+    }
   });
 
   btnNext.addEventListener("click", () => {
     pauseAnimation(btnPlay);
-    if (state.currentStepIndex < steps.length - 1) { state.currentStepIndex++; applyAnimationStep(steps[state.currentStepIndex]); }
+    if (state.currentStepIndex < steps.length - 1) {
+      state.currentStepIndex++;
+      applyAnimationStep(steps[state.currentStepIndex]);
+    }
   });
 
   btnRestart.addEventListener("click", () => {
@@ -409,11 +1001,12 @@ function initLayerExplorer(container) {
 
 function applyAnimationStep(stepData) {
   if (!stepData) return;
+
   clearSvgEffects();
   const captionBox = document.getElementById("step-caption");
-  if (captionBox) captionBox.textContent = `Step ${stepData.order || state.currentStepIndex + 1}: ${stepData.caption}`;[cite: 2]
+  if (captionBox) captionBox.textContent = `Step ${stepData.order || state.currentStepIndex + 1}: ${stepData.caption}`;
 
-  const targetEl = document.getElementById(stepData.element_id);[cite: 2]
+  const targetEl = document.getElementById(stepData.element_id);
   if (!targetEl) {
     announceStatus(`Step ${stepData.order}: ${stepData.caption}`);
     return;
@@ -426,20 +1019,26 @@ function applyAnimationStep(stepData) {
     return;
   }
 
-  const duration = (stepData.duration || 800) / state.playbackSpeed;[cite: 2]
+  const duration = (stepData.duration || 800) / state.playbackSpeed;
   targetEl.style.setProperty("--anim-duration", `${duration}ms`);
 
   switch (stepData.action) {
-    case "fade-in":[cite: 2]
-      targetEl.style.display = ""; targetEl.style.opacity = "0"; targetEl.classList.add("svg-fade-transition");
+    case "fade-in":
+      targetEl.style.display = "";
+      targetEl.style.opacity = "0";
+      targetEl.classList.add("svg-fade-transition");
       setTimeout(() => { targetEl.style.opacity = "1"; }, 20);
       break;
-    case "pulse":[cite: 2]
-      targetEl.style.display = ""; targetEl.classList.add("svg-pulse");
+
+    case "pulse":
+      targetEl.style.display = "";
+      targetEl.classList.add("svg-pulse");
       break;
-    case "highlight":[cite: 2]
+
+    case "highlight":
     default:
-      targetEl.style.display = ""; targetEl.classList.add("svg-highlight");
+      targetEl.style.display = "";
+      targetEl.classList.add("svg-highlight");
       break;
   }
 
@@ -448,10 +1047,11 @@ function applyAnimationStep(stepData) {
 
 function playAnimation(steps, playButton) {
   state.isPlaying = true;
-  playButton.textContent = "⏸ Pause";[cite: 2]
+  playButton.textContent = t("pause");
 
   const advance = () => {
     if (!state.isPlaying) return;
+
     applyAnimationStep(steps[state.currentStepIndex]);
 
     if (state.currentStepIndex < steps.length - 1) {
@@ -460,15 +1060,16 @@ function playAnimation(steps, playButton) {
       state.animationTimer = setTimeout(advance, currentDuration);
     } else {
       pauseAnimation(playButton);
-      announceStatus("Sequence playback completed.");
+      announceStatus(t("playbackComplete"));
     }
   };
+
   advance();
 }
 
 function pauseAnimation(playButton) {
   state.isPlaying = false;
-  if (playButton) playButton.textContent = "▶ Play";[cite: 2]
+  if (playButton) playButton.textContent = t("play");
   if (state.animationTimer) clearTimeout(state.animationTimer);
 }
 
@@ -481,147 +1082,167 @@ function clearSvgEffects() {
   });
 }
 
-// Template 3: Process Sequence Builder[cite: 2]
+// TEMPLATE 3: Sequence Builder — reveals SVG layers one at a time, in a
+// fixed order, advancing only on explicit button click (no autoplay timer),
+// and stopping for good once the last step has been revealed.
 function initSequenceBuilder(container) {
-  const sequences = state.config.sequences || [
-    { item_id: "seq-1", label: "Deoxygenated blood enters Right Atrium", expected_order: 1, feedback: "Blood enters the right atrium first." },[cite: 2]
-    { item_id: "seq-2", label: "Blood flows through Tricuspid Valve to Right Ventricle", expected_order: 2, feedback: "Tricuspid valve leads into the right ventricle." },[cite: 2]
-    { item_id: "seq-3", label: "Right Ventricle pumps blood to Pulmonary Artery", expected_order: 3, feedback: "Blood travels via pulmonary artery toward lungs." },[cite: 2]
-    { item_id: "seq-4", label: "Oxygenated blood returns via Pulmonary Veins to Left Atrium", expected_order: 4, feedback: "Oxygenated blood returns to left atrium." }[cite: 2]
+  const rows = (state.config && state.config.sequences) || [
+    { item_id: "seq-1", element_id: "Label_Right_atrium", order: 1, caption: "Deoxygenated blood enters the Right Atrium." },
+    { item_id: "seq-2", element_id: "Label_Right_ventricle", order: 2, caption: "Blood flows through the Tricuspid Valve into the Right Ventricle." },
+    { item_id: "seq-3", element_id: "Label_Pulmonary_artery", order: 3, caption: "Blood is pumped to the lungs via the Pulmonary Artery." },
+    { item_id: "seq-4", element_id: "Label_Left_atrium", order: 4, caption: "Oxygenated blood returns to the Left Atrium via the Pulmonary Veins." }
   ];
 
-  state.userSequence = [...sequences].sort(() => Math.random() - 0.5);
+  // Accept either `element_id` (matches the `animations` tab convention) or
+  // a bare `item_id` for sheets that reuse it as the SVG id, and sort by
+  // `order`/`expected_order` since Sheet rows aren't guaranteed pre-sorted.
+  const sequence = rows
+    .map((row, i) => ({
+      elementId: row.element_id || row.item_id,
+      order: Number(row.order || row.expected_order) || i + 1,
+      caption: row.caption || row.label || ""
+    }))
+    .sort((a, b) => a.order - b.order);
 
-  const wrapper = document.createElement("div");
-  wrapper.id = "sequence-list-container";
-  
-  const checkBtn = document.createElement("button");
-  checkBtn.type = "button";
-  checkBtn.textContent = "Check Sequence Order";
-  checkBtn.style.marginTop = "12px"; checkBtn.style.padding = "10px 16px"; checkBtn.style.minHeight = "44px";
+  state.sequenceSteps = sequence;
+  state.currentStepIndex = -1; // nothing revealed yet
 
-  const feedbackBox = document.createElement("div");
-  feedbackBox.className = "caption-box";
-  feedbackBox.id = "sequence-feedback";
-  feedbackBox.style.display = "none";
+  // Hide every target layer up front so "Reveal Next" builds the
+  // illustration up in order rather than starting fully visible.
+  sequence.forEach((step) => {
+    const el = document.getElementById(step.elementId);
+    if (el) el.classList.add("is-hidden");
+  });
 
-  container.appendChild(wrapper);
-  container.appendChild(checkBtn);
-  container.appendChild(feedbackBox);
+  const controlsDiv = document.createElement("div");
+  controlsDiv.className = "playback-controls";
+  controlsDiv.innerHTML = `
+    <button type="button" id="btn-reveal-next">${t("revealNext")}</button>
+    <button type="button" id="btn-sequence-restart">${t("restart")}</button>
+    <label style="margin-left:12px; cursor:pointer;">
+      <input type="checkbox" id="chk-reduced-motion-seq" ${state.isReducedMotion ? "checked" : ""}> ${t("reduceMotion")}
+    </label>
+  `;
 
-  renderSequenceList(wrapper);
+  const captionBox = document.createElement("div");
+  captionBox.className = "caption-box";
+  captionBox.id = "sequence-caption";
+  captionBox.setAttribute("aria-live", "polite");
+  captionBox.textContent = t("sequenceReady")(sequence.length);
 
-  checkBtn.addEventListener("click", () => {
-    let feedbackText = "Great job! The sequence order is completely correct.";
-    for (let i = 0; i < state.userSequence.length; i++) {
-      if (state.userSequence[i].expected_order !== i + 1) {
-        feedbackText = `Not quite. Examine step ${i + 1}: "${state.userSequence[i].label}". ${state.userSequence[i].feedback}`;[cite: 2]
-        break;
-      }
+  container.appendChild(controlsDiv);
+  container.appendChild(captionBox);
+
+  const btnNext = document.getElementById("btn-reveal-next");
+  const btnRestart = document.getElementById("btn-sequence-restart");
+  const chkMotion = document.getElementById("chk-reduced-motion-seq");
+
+  chkMotion.addEventListener("change", (e) => {
+    state.isReducedMotion = e.target.checked;
+    announceStatus(state.isReducedMotion ? t("motionEnabled") : t("motionDisabled"));
+  });
+
+  btnNext.addEventListener("click", () => revealNextInSequence(btnNext, captionBox));
+  btnRestart.addEventListener("click", () => restartSequence(btnNext, captionBox));
+}
+
+function revealNextInSequence(btnNext, captionBox) {
+  const sequence = state.sequenceSteps;
+  if (state.currentStepIndex >= sequence.length - 1) return; // already played through once
+
+  state.currentStepIndex++;
+  const step = sequence[state.currentStepIndex];
+  const el = document.getElementById(step.elementId);
+
+  if (el) {
+    el.classList.remove("is-hidden");
+    if (!state.isReducedMotion) {
+      el.style.setProperty("--anim-duration", "600ms");
+      el.style.opacity = "0";
+      el.classList.add("svg-fade-transition");
+      requestAnimationFrame(() => { el.style.opacity = "1"; });
     }
-    feedbackBox.style.display = "block";
-    feedbackBox.textContent = feedbackText;
-    announceStatus(feedbackText);
-  });
+  }
+
+  const stepLabel = `Step ${state.currentStepIndex + 1} of ${sequence.length}: ${step.caption}`;
+  captionBox.textContent = stepLabel;
+  announceStatus(stepLabel);
+
+  if (state.currentStepIndex >= sequence.length - 1) {
+    btnNext.disabled = true;
+    btnNext.textContent = t("sequenceComplete");
+    announceStatus(t("sequenceCompleteAnnounce"));
+  }
 }
 
-function renderSequenceList(container) {
-  container.innerHTML = "";
-  state.userSequence.forEach((item, index) => {
-    const itemRow = document.createElement("div");
-    itemRow.className = "sequence-item";
-    
-    const labelSpan = document.createElement("span");
-    labelSpan.textContent = `${index + 1}. ${item.label}`;
-
-    const controls = document.createElement("div");
-    controls.className = "sequence-controls";
-
-    const moveUpBtn = document.createElement("button");
-    moveUpBtn.type = "button"; moveUpBtn.textContent = "▲ Move Up";[cite: 2]
-    moveUpBtn.disabled = index === 0;
-    moveUpBtn.setAttribute("aria-label", `Move ${item.label} up`);
-
-    const moveDownBtn = document.createElement("button");
-    moveDownBtn.type = "button"; moveDownBtn.textContent = "▼ Move Down";[cite: 2]
-    moveDownBtn.disabled = index === state.userSequence.length - 1;
-    moveDownBtn.setAttribute("aria-label", `Move ${item.label} down`);
-
-    moveUpBtn.addEventListener("click", () => {
-      [state.userSequence[index - 1], state.userSequence[index]] = [state.userSequence[index], state.userSequence[index - 1]];
-      renderSequenceList(container);
-      announceStatus(`Moved ${item.label} to position ${index}.`);
-    });
-
-    moveDownBtn.addEventListener("click", () => {
-      [state.userSequence[index], state.userSequence[index + 1]] = [state.userSequence[index + 1], state.userSequence[index]];
-      renderSequenceList(container);
-      announceStatus(`Moved ${item.label} to position ${index + 2}.`);
-    });
-
-    controls.appendChild(moveUpBtn);
-    controls.appendChild(moveDownBtn);
-    itemRow.appendChild(labelSpan);
-    itemRow.appendChild(controls);
-    container.appendChild(itemRow);
+function restartSequence(btnNext, captionBox) {
+  state.sequenceSteps.forEach((step) => {
+    const el = document.getElementById(step.elementId);
+    if (el) {
+      el.classList.add("is-hidden");
+      el.classList.remove("svg-fade-transition");
+      el.style.opacity = "";
+    }
   });
+
+  state.currentStepIndex = -1;
+  btnNext.disabled = false;
+  btnNext.textContent = t("revealNext");
+  captionBox.textContent = t("sequenceReady")(state.sequenceSteps.length);
+  announceStatus(t("sequenceReset"));
 }
 
+// 6. Utility: Screen Reader Announcements
 function announceStatus(message) {
   const announcer = document.getElementById("status-announcer");
-  if (announcer) announcer.textContent = message;
+  if (announcer) {
+    announcer.textContent = message;
+  }
 }
 
-document.addEventListener("DOMContentLoaded", initInteractiveApp);
-```[cite: 1, 2, 3]
-
----
+document.addEventListener("DOMContentLoaded", () => {
+  initLanguageToggle();
+  initInteractiveApp();
+});
+```
 
 ### D. Google Apps Script Backend (`Code.gs`)
 
-Acts as the REST API with Google's `CacheService` to minimize latency[cite: 1].
+**Lives outside this repository** — deployed directly from the Google Apps Script editor bound to the Sheet. A working copy is kept at `~/Desktop/code.gs`; after any edit here, it must be re-deployed (**Deploy → Manage deployments → Edit → New version**) for the live `/exec` URL to pick up the change, and `APPS_SCRIPT_URL` in `app.js` updated if the deployment URL changes.
 
 ```javascript
-/******************************************************************************
- * Astra Interactive Course Toolkit - Backend API & Import Utilities
- * Google Apps Script for Google Sheet: Astra_Github_SVG_V2
- ******************************************************************************/
-
+/***********************
+ * 1) JSON API for labels
+ *    /exec?lang=en
+ ***********************/
 function doGet(e) {
-  e = e || { parameter: {} };
-  var lang = (e.parameter.lang || 'en').toLowerCase();
+  var lang = (e.parameter.lang || 'en').toLowerCase(); // e.g., en, es
   var diagramId = (e.parameter.diagram || 'heart').toLowerCase();
-
-  var cache = CacheService.getScriptCache();
-  var cacheKey = "api_cache_" + diagramId + "_" + lang;
-  var cachedResponse = cache.get(cacheKey);
-
-  if (cachedResponse) {
-    return ContentService.createTextOutput(cachedResponse)
-      .setMimeType(ContentService.MimeType.JSON);
-  }
 
   var ss = SpreadsheetApp.getActive();
 
+  // ----- 1) LABELS -----
   var labelSheet = ss.getSheetByName('labels');
   var labelRows = [];
   if (labelSheet) {
     var values = labelSheet.getDataRange().getValues();
     if (values.length > 1) {
       var header = values.shift();
+
       function idx(name) { return header.indexOf(name); }
 
       var idCol        = idx('svg_id');
       var enCol        = idx('en_text');
       var tooltipEnCol = idx('tooltip_en');
       var visibleCol   = idx('visible_default');
-      var langCol      = idx(lang + '_text');
-      var diagramCol   = idx('diagram_id');
+      var alignCol     = idx('text_align');   // optional; 'right' for labels that must grow away from a leader line on their right
+      var langCol      = idx(lang + '_text'); // e.g. "es_text"
+      var diagramCol   = idx('diagram_id');   // optional; if missing, all rows assumed for this diagram
 
       labelRows = values
         .filter(function (r) {
-          if (idCol === -1 || !r[idCol]) return false;
-          if (diagramCol === -1) return true;
+          if (idCol === -1 || !r[idCol]) return false; // need svg_id
+          if (diagramCol === -1) return true;          // no diagram_id column yet -> include all
           return String(r[diagramCol]).toLowerCase() === diagramId;
         })
         .map(function (r) {
@@ -629,43 +1250,48 @@ function doGet(e) {
           var localized = (langCol !== -1 && r[langCol]) ? r[langCol] : en;
           var tooltip = tooltipEnCol !== -1 ? (r[tooltipEnCol] || '') : '';
           var visRaw = visibleCol !== -1 ? String(r[visibleCol]) : 'TRUE';
+          var alignRaw = alignCol !== -1 ? String(r[alignCol] || '').toLowerCase() : 'left';
 
           return {
-            id: String(r[idCol]),
-            text: String(localized || ''),
-            tooltip: String(tooltip),
-            visible: String(visRaw).toLowerCase() === 'true'
+            id: r[idCol],
+            text: localized || '',
+            tooltip: tooltip,
+            visible: visRaw.toLowerCase() === 'true',
+            align: alignRaw === 'right' ? 'right' : 'left'
           };
         });
     }
   }
 
+  // ----- 2) DIAGRAM META (title + desc) -----
   var metaSheet = ss.getSheetByName('diagram_meta');
   var meta = { title: '', desc: '' };
+
   if (metaSheet) {
     var mValues = metaSheet.getDataRange().getValues();
     if (mValues.length > 1) {
       var mHeader = mValues.shift();
       function midx(name) { return mHeader.indexOf(name); }
 
-      var dIdCol   = midx('diagram_id');
-      var mLangCol = midx('lang');
-      var titleCol = midx('title');
-      var descCol  = midx('desc');
+      var dIdCol  = midx('diagram_id');
+      var langCol = midx('lang');
+      var titleCol= midx('title');
+      var descCol = midx('desc');
 
       var row = mValues.find(function (r) {
         var idMatch = (dIdCol !== -1) && String(r[dIdCol]).toLowerCase() === diagramId;
-        var langMatch = (mLangCol === -1) || String(r[mLangCol]).toLowerCase() === lang;
+        var langMatch = (langCol === -1) || String(r[langCol]).toLowerCase() === lang;
         return idMatch && langMatch;
       });
 
       if (row) {
-        meta.title = titleCol !== -1 ? String(row[titleCol] || '') : '';
-        meta.desc  = descCol  !== -1 ? String(row[descCol]  || '') : '';
+        meta.title = titleCol !== -1 ? (row[titleCol] || '') : '';
+        meta.desc  = descCol  !== -1 ? (row[descCol]  || '') : '';
       }
     }
   }
 
+  // ----- 3) ANIMATIONS (Layer Explorer steps) -----
   var animSheet = ss.getSheetByName('animations');
   var animRows = [];
   if (animSheet) {
@@ -701,6 +1327,7 @@ function doGet(e) {
     }
   }
 
+  // ----- 4) SEQUENCES (Sequence Builder steps) -----
   var seqSheet = ss.getSheetByName('sequences');
   var seqRows = [];
   if (seqSheet) {
@@ -724,8 +1351,8 @@ function doGet(e) {
         .map(function (r) {
           return {
             item_id: String(r[itemIdCol]),
-            label: sCaptionCol !== -1 ? String(r[sCaptionCol]) : '',
             expected_order: expOrderCol !== -1 ? Number(r[expOrderCol]) || 1 : 1,
+            caption: sCaptionCol !== -1 ? String(r[sCaptionCol]) : '',
             feedback: feedbackCol !== -1 ? String(r[feedbackCol]) : ''
           };
         });
@@ -739,20 +1366,19 @@ function doGet(e) {
     sequences: seqRows
   };
 
-  var jsonString = JSON.stringify(payload);
-  cache.put(cacheKey, jsonString, 21600); // 6 hours
-
-  return ContentService.createTextOutput(jsonString)
+  return ContentService
+    .createTextOutput(JSON.stringify(payload))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
-function clearApiCache() {
-  var cache = CacheService.getScriptCache();
-  cache.remove("api_cache_heart_en");
-  cache.remove("api_cache_heart_es");
-  SpreadsheetApp.getUi().alert("API Cache cleared!");
-}
 
+/**************************************
+ * 2) Import label text + ids from SVG
+ *
+ * Usage:
+ * - Sheet "svg_raw": paste SVG (or label chunk) into A1
+ * - Sheet "imported_labels": will be filled with en_text, svg_id, visible_default
+ **************************************/
 function importLabelsFromSvg() {
   var ss    = SpreadsheetApp.getActive();
   var rawSh = ss.getSheetByName('svg_raw');
@@ -769,15 +1395,28 @@ function importLabelsFromSvg() {
     return;
   }
 
+  // Regex to capture:
+  //   1) group id="Label_*"
+  //   2) the inner <text>...</text> content (including tspans)
   var re = /<g[^>]*id="(Label_[^"]+)"[^>]*>[\s\S]*?<text[^>]*>([\s\S]*?)<\/text>[\s\S]*?<\/g>/g;
-  var rows = [["en_text", "svg_id", "visible_default"]];
+
+  var rows = [["en_text", "svg_id", "visible_default"]]; // header row
   var match;
 
   while ((match = re.exec(svgText)) !== null) {
     var id  = match[1];
     var raw = match[2];
+
+    // 1) Insert a space between consecutive tspan blocks
     raw = raw.replace(/<\/tspan>\s*<tspan[^>]*>/g, ' ');
-    var text = raw.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+
+    // 2) Strip remaining tags & normalize whitespace
+    var text = raw
+      .replace(/<[^>]+>/g, "")  // remove tags
+      .replace(/\s+/g, " ")     // collapse whitespace
+      .trim();
+
+    // Default visibility = TRUE for every imported label
     rows.push([text, id, true]);
   }
 
@@ -789,32 +1428,92 @@ function importLabelsFromSvg() {
   }
 }
 
+/**************************************
+ * 3) List every element id in svg_raw (helper for animations/sequences)
+ *
+ * Usage:
+ * - Sheet "svg_raw": same source used by the label import above
+ * - Sheet "svg_element_ids": will be filled with every id found + a naive type guess
+ **************************************/
+function listElementIdsFromSvg() {
+  var ss    = SpreadsheetApp.getActive();
+  var rawSh = ss.getSheetByName('svg_raw');
+  var outSh = ss.getSheetByName('svg_element_ids');
+
+  if (!rawSh || !outSh) {
+    SpreadsheetApp.getUi().alert('Need sheets named "svg_raw" and "svg_element_ids".');
+    return;
+  }
+
+  var svgText = rawSh.getRange('A1').getValue();
+  if (!svgText) {
+    SpreadsheetApp.getUi().alert('Cell A1 of "svg_raw" is empty.');
+    return;
+  }
+
+  var idRe = /id="([^"]+)"/g;
+  var seen = {};
+  var rows = [["element_id", "looks_like"]];
+  var match;
+
+  while ((match = idRe.exec(svgText)) !== null) {
+    var id = match[1];
+    if (seen[id]) continue;
+    seen[id] = true;
+
+    var guess = id.indexOf('Label_') === 0 ? 'label'
+              : id.indexOf('structure-') === 0 ? 'structure'
+              : id.indexOf('layer-') === 0 ? 'layer'
+              : 'other';
+
+    rows.push([id, guess]);
+  }
+
+  outSh.clearContents();
+  outSh.getRange(1, 1, rows.length, rows[0].length).setValues(rows);
+}
+
+/**************************************
+ * 4) Custom menu: "Labels" → import/list helpers
+ **************************************/
 function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('Labels')
     .addItem('Import labels from SVG', 'importLabelsFromSvg')
-    .addItem('Clear API Cache', 'clearApiCache')
+    .addItem('List all element ids from SVG', 'listElementIdsFromSvg')
     .addToUi();
 }
-```[cite: 1, 4]
+```
 
----
+Note: this `doGet()` has no server-side `CacheService` layer (unlike an earlier draft of this backend) — the only caching is client-side, in `app.js`'s `fetchWithCache()` (Section 4C), keyed separately for the SVG (`cache_svg_{diagram}`) and the API payload (`cache_api_{diagram}_{lang}`). Both use stale-while-revalidate: a cached value is shown immediately while a fresh copy is fetched in the background for *next* load — meaning a plain reload after editing the Sheet can still show stale data. To force a fresh load: `localStorage.clear()` in the browser console, then reload.
 
-## 5. Summary of Workflow Steps & Git Commands
+## 5. Known Gaps / Deliberate Non-Goals
 
-### Local Build & Processing Workflow
-1. Place raw vector illustration exports in `assets/source/heart.svg`[cite: 2].
-2. Run the Node.js preparation script:
-   ```bash
-   node tools/prepare-svg/index.js
-   ```[cite: 2]
-3. Verify output files generated in `assets/prepared/heart.svg` and `assets/manifests/heart.json`[cite: 2].
+- **Animation/sequence captions are English-only.** The `animations` and `sequences` tabs each have a single `caption` column, no `caption_es` equivalent — switching to Spanish only re-localizes labels, the diagram title/description, and the fixed UI chrome, not step narration. Extending this would mean adding `caption_es` columns and reading them the same way `labels.es_text` is read.
+- **`text_align` only supports `left`/`right`**, not vertical (`top`/`bottom`) growth direction — fine for this two-column layout (labels flanking the illustration left/right), but would need a different anchor axis for a diagram with labels above/below.
+- Diagram/label data for a new illustration is entirely manual to author (no bulk-import beyond id/caption scraping) — `feedback` in `sequences` is unused by the current activity and safe to ignore, kept only because Apps Script code once used it.
 
-### Git Authentication & Sync Workflow
-* Authenticate using GitHub CLI:
-  ```bash
-  gh auth login
-   Push updates to GitHub repository:Bashgit add .
-git commit -m "Complete interactive SVG engine implementation"
+## 6. Workflow
+
+### Adding a new illustration
+1. Export from Illustrator per Section 4A's settings checklist (Internal CSS, keep text as SVG not outlines, Layer Names for Object IDs, Responsive on).
+2. Drop the file in `assets/source/` — any number of SVGs can go here.
+3. Run `node tools/prepare-svg/index.js` — batch-processes every `.svg` in `assets/source/` into `assets/prepared/` + `assets/manifests/`, auto-repairing missing font fallbacks and flagging duplicate ids / missing viewBox / inline scripts along the way.
+4. Add Sheet rows for the new `diagram_id` across whichever of `labels` / `diagram_meta` / `animations` / `sequences` tabs the new illustration needs, using `svg_element_ids` (via the "List all element ids from SVG" menu item) to avoid id typos.
+5. Load it with `index.html?diagram=<id>&mode=<mode>`.
+
+### Testing a Sheet/backend change
+1. Edit `~/Desktop/code.gs`, paste into the Apps Script editor.
+2. **Deploy → Manage deployments → Edit (pencil icon) → New version** — editing alone does not update the live `/exec` URL.
+3. If the deployment URL changed, update `APPS_SCRIPT_URL` in `app.js` and push.
+4. In the browser: `localStorage.clear(); location.reload();` to bypass the client-side cache. If a change still doesn't appear, also check for a stale browser *HTTP* cache (separate from `localStorage`) — a true hard reload (DevTools → right-click reload → "Empty Cache and Hard Reload") or an Incognito window rules that out definitively.
+
+### Git sync
+```bash
+git add .
+git commit -m "..."
 git push origin main
-6. Ebook & LMS Production Packaging StrategyTo eliminate Google Apps Script API network latency in published ebooks or LMS courseware:Authoring Environment: Use Google Sheets + Google Apps Script during content creation and editing[cite: 1, 2].Production Packaging: Save a static snapshot of the Google Sheets API payload as a local JSON file at assets/manifests/heart.json[cite: 2].Runtime Deployment: Configure app.js to fetch directly from ./assets/manifests/${diagramId}.json, achieving instant offline performance[cite: 2].
+```
+
+### Production packaging (future option, not yet in use)
+To eliminate Apps Script network latency for a published/offline build: keep the Sheet + Apps Script as the authoring environment, but save a static snapshot of its JSON payload to `assets/manifests/{diagram}.json` and point `app.js` at that local file instead of `APPS_SCRIPT_URL` for a given release.
