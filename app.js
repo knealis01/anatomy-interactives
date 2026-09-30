@@ -11,7 +11,77 @@ const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbydklwxJqBkiheX
 const urlParams = new URLSearchParams(window.location.search);
 const diagramId = (urlParams.get("diagram") || "heart").toLowerCase();
 const activeMode = (urlParams.get("mode") || "label-studio").toLowerCase(); // 'label-studio' | 'layer-explorer' | 'sequence-builder'
-const lang = (urlParams.get("lang") || "en").toLowerCase();
+let lang = (urlParams.get("lang") || "en").toLowerCase(); // mutable — the language toggle reassigns this
+
+// Fixed UI chrome text (buttons, instructions, banners) isn't Sheet-authored
+// content, so it lives here rather than in a spreadsheet column. Diagram
+// titles/descriptions (diagram_meta) and label text (labels) still come
+// from the Sheet per-language, same as before.
+const UI_STRINGS = {
+  en: {
+    instructions: "Use the controls below to interact with the anatomical illustration.",
+    loading: "Loading activity data…",
+    loadError: "Couldn't load the latest activity data from the Sheet. Showing default content instead.",
+    retry: "Retry",
+    toggleAll: "Toggle All",
+    labelShown: (name) => `${name} label shown.`,
+    labelHidden: (name) => `${name} label hidden.`,
+    allShown: "All labels shown.",
+    allHidden: "All labels hidden.",
+    reduceMotion: "Reduce Motion",
+    motionEnabled: "Reduced motion enabled.",
+    motionDisabled: "Reduced motion disabled.",
+    prev: "⏮ Previous",
+    play: "▶ Play",
+    pause: "⏸ Pause",
+    next: "Next ⏭",
+    restart: "↺ Restart",
+    playbackComplete: "Sequence playback completed.",
+    revealNext: "Reveal Next ⏭",
+    sequenceComplete: "Sequence Complete",
+    sequenceCompleteAnnounce: "Sequence complete.",
+    sequenceReset: "Sequence reset.",
+    sequenceReady: (n) => `Ready — ${n} steps. Click "Reveal Next" to begin.`,
+    langEnglish: "English",
+    langSpanish: "Español",
+    langSwitched: "Switched to English.",
+    langSwitchFailed: "Could not load that language right now."
+  },
+  es: {
+    instructions: "Usa los controles a continuación para interactuar con la ilustración anatómica.",
+    loading: "Cargando datos de la actividad…",
+    loadError: "No se pudieron cargar los datos más recientes de la hoja de cálculo. Mostrando contenido predeterminado.",
+    retry: "Reintentar",
+    toggleAll: "Alternar todo",
+    labelShown: (name) => `Etiqueta ${name} mostrada.`,
+    labelHidden: (name) => `Etiqueta ${name} ocultada.`,
+    allShown: "Todas las etiquetas mostradas.",
+    allHidden: "Todas las etiquetas ocultadas.",
+    reduceMotion: "Reducir movimiento",
+    motionEnabled: "Movimiento reducido activado.",
+    motionDisabled: "Movimiento reducido desactivado.",
+    prev: "⏮ Anterior",
+    play: "▶ Reproducir",
+    pause: "⏸ Pausar",
+    next: "Siguiente ⏭",
+    restart: "↺ Reiniciar",
+    playbackComplete: "Reproducción de la secuencia completada.",
+    revealNext: "Mostrar siguiente ⏭",
+    sequenceComplete: "Secuencia completa",
+    sequenceCompleteAnnounce: "Secuencia completa.",
+    sequenceReset: "Secuencia reiniciada.",
+    sequenceReady: (n) => `Listo — ${n} pasos. Haz clic en "Mostrar siguiente" para comenzar.`,
+    langEnglish: "English",
+    langSpanish: "Español",
+    langSwitched: "Cambiado a español.",
+    langSwitchFailed: "No se pudo cargar ese idioma en este momento."
+  }
+};
+
+function t(key) {
+  const dict = UI_STRINGS[lang] || UI_STRINGS.en;
+  return dict[key] !== undefined ? dict[key] : UI_STRINGS.en[key];
+}
 
 // 2. Application State Management
 const state = {
@@ -24,7 +94,9 @@ const state = {
   animationTimer: null,
   isReducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
   // Sequence Builder State
-  sequenceSteps: []
+  sequenceSteps: [],
+  // Language Toggle State
+  isSwitchingLanguage: false
 };
 
 // 3. Stale-While-Revalidate Caching Helper
@@ -108,9 +180,46 @@ function injectAnimationStyles() {
   document.head.appendChild(style);
 }
 
+// Applies the fixed UI chrome text (instructions, loading/error banners,
+// retry button) for the current `lang`. Sheet-authored content (labels,
+// diagram title/desc) is handled separately by applyDiagramMeta/patchLabelText.
+function applyStaticUiText() {
+  const instructions = document.getElementById("label-instructions");
+  if (instructions) instructions.textContent = t("instructions");
+
+  const loadingMsg = document.getElementById("loading-message");
+  if (loadingMsg) loadingMsg.textContent = t("loading");
+
+  const errorMsg = document.getElementById("load-error-message");
+  if (errorMsg) errorMsg.textContent = t("loadError");
+
+  const retryBtn = document.getElementById("retry-load");
+  if (retryBtn) retryBtn.textContent = t("retry");
+}
+
+// Clears and rebuilds the toolbar for the currently active mode, using
+// whatever's in state.config. Shared by initial load, the error fallback,
+// and language switches so the three don't drift out of sync.
+function renderActiveMode(container) {
+  container.innerHTML = "";
+  switch (activeMode) {
+    case "sequence-builder":
+      initSequenceBuilder(container);
+      break;
+    case "layer-explorer":
+      initLayerExplorer(container);
+      break;
+    case "label-studio":
+    default:
+      initLabelStudio(container);
+      break;
+  }
+}
+
 // 5. Main Application Initialization (Fault-Tolerant)
 async function initInteractiveApp() {
   injectAnimationStyles();
+  applyStaticUiText();
 
   const toolbarContainer = document.getElementById("toolbar-container");
   const svgContainer = document.getElementById("svg-container");
@@ -142,22 +251,7 @@ async function initInteractiveApp() {
     const configData = await fetchWithCache(`${APPS_SCRIPT_URL}?diagram=${diagramId}&lang=${lang}`, apiKey);
     state.config = configData;
     applyDiagramMeta(state.config.meta);
-
-    toolbarContainer.innerHTML = "";
-
-    switch (activeMode) {
-      case "sequence-builder":
-        initSequenceBuilder(toolbarContainer);
-        break;
-      case "layer-explorer":
-        initLayerExplorer(toolbarContainer);
-        break;
-      case "label-studio":
-      default:
-        initLabelStudio(toolbarContainer);
-        break;
-    }
-
+    renderActiveMode(toolbarContainer);
     announceStatus("Activity data loaded and ready.");
   } catch (apiError) {
     console.warn("API Endpoint Warning (using default controls):", apiError);
@@ -165,21 +259,59 @@ async function initInteractiveApp() {
     state.config = state.config || {};
     if (errorBox) errorBox.hidden = false;
     announceStatus("Activity data unavailable; showing default content.");
-
-    toolbarContainer.innerHTML = "";
-    switch (activeMode) {
-      case "sequence-builder":
-        initSequenceBuilder(toolbarContainer);
-        break;
-      case "label-studio":
-        initLabelStudio(toolbarContainer);
-        break;
-      case "layer-explorer":
-      default:
-        initLayerExplorer(toolbarContainer);
-        break;
-    }
+    renderActiveMode(toolbarContainer);
   }
+}
+
+// 5b. Language Toggle (EN/ES) — refetches Sheet data for the new language
+// and rebuilds the active activity in place, no full page reload.
+async function setLanguage(newLang) {
+  if (newLang === lang || state.isSwitchingLanguage) return;
+  state.isSwitchingLanguage = true;
+
+  const toolbarContainer = document.getElementById("toolbar-container");
+
+  try {
+    lang = newLang;
+    applyStaticUiText();
+
+    const apiKey = `cache_api_${diagramId}_${lang}`;
+    const configData = await fetchWithCache(`${APPS_SCRIPT_URL}?diagram=${diagramId}&lang=${lang}`, apiKey);
+    state.config = configData;
+    applyDiagramMeta(state.config.meta);
+    renderActiveMode(toolbarContainer);
+    announceStatus(t("langSwitched"));
+
+    const url = new URL(window.location.href);
+    url.searchParams.set("lang", lang);
+    window.history.replaceState({}, "", url);
+  } catch (err) {
+    console.warn("Language switch failed:", err);
+    announceStatus(t("langSwitchFailed"));
+  } finally {
+    state.isSwitchingLanguage = false;
+    document.querySelectorAll("#lang-toggle button").forEach((btn) => {
+      btn.setAttribute("aria-pressed", btn.dataset.lang === lang ? "true" : "false");
+    });
+  }
+}
+
+function initLanguageToggle() {
+  const host = document.getElementById("lang-toggle");
+  if (!host) return;
+
+  [
+    { code: "en", label: () => UI_STRINGS.en.langEnglish },
+    { code: "es", label: () => UI_STRINGS.es.langSpanish }
+  ].forEach(({ code, label }) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = label();
+    btn.dataset.lang = code;
+    btn.setAttribute("aria-pressed", code === lang ? "true" : "false");
+    btn.addEventListener("click", () => setLanguage(code));
+    host.appendChild(btn);
+  });
 }
 
 // Applies Sheet-provided title/description to both the HTML header and the
@@ -278,7 +410,7 @@ function initLabelStudio(container) {
     button.addEventListener("click", () => {
       const hidden = el.classList.toggle("is-hidden");
       button.setAttribute("aria-pressed", hidden ? "false" : "true");
-      announceStatus(`${button.textContent} label ${hidden ? "hidden" : "shown"}.`);
+      announceStatus(hidden ? t("labelHidden")(button.textContent) : t("labelShown")(button.textContent));
     });
 
     container.appendChild(button);
@@ -288,14 +420,14 @@ function initLabelStudio(container) {
   const allButton = document.createElement("button");
   allButton.type = "button";
   allButton.id = "toggle-all";
-  allButton.textContent = "Toggle All";
+  allButton.textContent = t("toggleAll");
   allButton.setAttribute("aria-pressed", "false");
   allButton.addEventListener("click", () => {
     const anyVisible = labelEls.some((el) => !el.classList.contains("is-hidden"));
     labelEls.forEach((el) => el.classList.toggle("is-hidden", anyVisible));
     buttons.forEach((b) => b.setAttribute("aria-pressed", anyVisible ? "false" : "true"));
     allButton.setAttribute("aria-pressed", anyVisible ? "false" : "true");
-    announceStatus(anyVisible ? "All labels hidden." : "All labels shown.");
+    announceStatus(anyVisible ? t("allHidden") : t("allShown"));
   });
   container.appendChild(allButton);
 }
@@ -347,12 +479,12 @@ function initLayerExplorer(container) {
   const controlsDiv = document.createElement("div");
   controlsDiv.className = "playback-controls";
   controlsDiv.innerHTML = `
-    <button type="button" id="btn-prev" aria-label="Previous step">⏮ Previous</button>
-    <button type="button" id="btn-play" aria-label="Play animation">▶ Play</button>
-    <button type="button" id="btn-next" aria-label="Next step">Next ⏭</button>
-    <button type="button" id="btn-restart" aria-label="Restart sequence">↺ Restart</button>
+    <button type="button" id="btn-prev">${t("prev")}</button>
+    <button type="button" id="btn-play">${t("play")}</button>
+    <button type="button" id="btn-next">${t("next")}</button>
+    <button type="button" id="btn-restart">${t("restart")}</button>
     <label style="margin-left:12px; cursor:pointer;">
-      <input type="checkbox" id="chk-reduced-motion" ${state.isReducedMotion ? "checked" : ""}> Reduce Motion
+      <input type="checkbox" id="chk-reduced-motion" ${state.isReducedMotion ? "checked" : ""}> ${t("reduceMotion")}
     </label>
   `;
 
@@ -372,7 +504,7 @@ function initLayerExplorer(container) {
 
   chkMotion.addEventListener("change", (e) => {
     state.isReducedMotion = e.target.checked;
-    announceStatus(`Reduced motion ${state.isReducedMotion ? "enabled" : "disabled"}.`);
+    announceStatus(state.isReducedMotion ? t("motionEnabled") : t("motionDisabled"));
   });
 
   btnPlay.addEventListener("click", () => {
@@ -457,7 +589,7 @@ function applyAnimationStep(stepData) {
 
 function playAnimation(steps, playButton) {
   state.isPlaying = true;
-  playButton.textContent = "⏸ Pause";
+  playButton.textContent = t("pause");
 
   const advance = () => {
     if (!state.isPlaying) return;
@@ -470,7 +602,7 @@ function playAnimation(steps, playButton) {
       state.animationTimer = setTimeout(advance, currentDuration);
     } else {
       pauseAnimation(playButton);
-      announceStatus("Sequence playback completed.");
+      announceStatus(t("playbackComplete"));
     }
   };
 
@@ -479,7 +611,7 @@ function playAnimation(steps, playButton) {
 
 function pauseAnimation(playButton) {
   state.isPlaying = false;
-  if (playButton) playButton.textContent = "▶ Play";
+  if (playButton) playButton.textContent = t("play");
   if (state.animationTimer) clearTimeout(state.animationTimer);
 }
 
@@ -527,10 +659,10 @@ function initSequenceBuilder(container) {
   const controlsDiv = document.createElement("div");
   controlsDiv.className = "playback-controls";
   controlsDiv.innerHTML = `
-    <button type="button" id="btn-reveal-next">Reveal Next ⏭</button>
-    <button type="button" id="btn-sequence-restart" aria-label="Restart sequence">↺ Restart</button>
+    <button type="button" id="btn-reveal-next">${t("revealNext")}</button>
+    <button type="button" id="btn-sequence-restart">${t("restart")}</button>
     <label style="margin-left:12px; cursor:pointer;">
-      <input type="checkbox" id="chk-reduced-motion-seq" ${state.isReducedMotion ? "checked" : ""}> Reduce Motion
+      <input type="checkbox" id="chk-reduced-motion-seq" ${state.isReducedMotion ? "checked" : ""}> ${t("reduceMotion")}
     </label>
   `;
 
@@ -538,7 +670,7 @@ function initSequenceBuilder(container) {
   captionBox.className = "caption-box";
   captionBox.id = "sequence-caption";
   captionBox.setAttribute("aria-live", "polite");
-  captionBox.textContent = `Ready — ${sequence.length} steps. Click "Reveal Next" to begin.`;
+  captionBox.textContent = t("sequenceReady")(sequence.length);
 
   container.appendChild(controlsDiv);
   container.appendChild(captionBox);
@@ -549,7 +681,7 @@ function initSequenceBuilder(container) {
 
   chkMotion.addEventListener("change", (e) => {
     state.isReducedMotion = e.target.checked;
-    announceStatus(`Reduced motion ${state.isReducedMotion ? "enabled" : "disabled"}.`);
+    announceStatus(state.isReducedMotion ? t("motionEnabled") : t("motionDisabled"));
   });
 
   btnNext.addEventListener("click", () => revealNextInSequence(btnNext, captionBox));
@@ -580,8 +712,8 @@ function revealNextInSequence(btnNext, captionBox) {
 
   if (state.currentStepIndex >= sequence.length - 1) {
     btnNext.disabled = true;
-    btnNext.textContent = "Sequence Complete";
-    announceStatus("Sequence complete.");
+    btnNext.textContent = t("sequenceComplete");
+    announceStatus(t("sequenceCompleteAnnounce"));
   }
 }
 
@@ -597,9 +729,9 @@ function restartSequence(btnNext, captionBox) {
 
   state.currentStepIndex = -1;
   btnNext.disabled = false;
-  btnNext.textContent = "Reveal Next ⏭";
-  captionBox.textContent = `Ready — ${state.sequenceSteps.length} steps. Click "Reveal Next" to begin.`;
-  announceStatus("Sequence reset.");
+  btnNext.textContent = t("revealNext");
+  captionBox.textContent = t("sequenceReady")(state.sequenceSteps.length);
+  announceStatus(t("sequenceReset"));
 }
 
 // 6. Utility: Screen Reader Announcements
@@ -610,4 +742,7 @@ function announceStatus(message) {
   }
 }
 
-document.addEventListener("DOMContentLoaded", initInteractiveApp);
+document.addEventListener("DOMContentLoaded", () => {
+  initLanguageToggle();
+  initInteractiveApp();
+});
