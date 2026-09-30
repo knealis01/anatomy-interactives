@@ -266,12 +266,14 @@ function initLabelStudio(container) {
     button.setAttribute("aria-pressed", isVisible ? "true" : "false");
     button.textContent = info && info.text ? info.text.replace(/\r?\n/g, " ") : fallbackName;
 
+    // Measure/patch text before toggling visibility — getBBox() (used for
+    // right-aligned labels below) returns a zeroed box on a hidden element.
+    patchLabelText(el, info);
     el.classList.toggle("is-hidden", !isVisible);
     if (info && info.tooltip) {
       el.setAttribute("aria-label", info.tooltip);
       el.setAttribute("title", info.tooltip);
     }
-    patchLabelText(el, info);
 
     button.addEventListener("click", () => {
       const hidden = el.classList.toggle("is-hidden");
@@ -299,18 +301,31 @@ function initLabelStudio(container) {
 }
 
 // Replaces a label group's <text> content with Sheet-provided text, wrapping
-// multi-line entries in <tspan>s anchored to the original x/y position.
+// multi-line entries in <tspan>s. Labels flagged align:"right" (Sheet column
+// `text_align`) measure their original, as-drawn right edge via getBBox()
+// before the swap and re-anchor there with text-anchor:end, so replacement
+// text of any length grows leftward — away from a leader line on the right —
+// instead of growing rightward over it.
 function patchLabelText(el, info) {
   if (!info || !info.text) return;
   const textNode = el.querySelector("text");
   if (!textNode) return;
+
+  const alignEnd = info.align === "right";
+  let anchorX = textNode.getAttribute("x") || "0";
+
+  if (alignEnd) {
+    const bbox = textNode.getBBox();
+    anchorX = bbox.x + bbox.width;
+    textNode.setAttribute("text-anchor", "end");
+  }
 
   while (textNode.firstChild) textNode.removeChild(textNode.firstChild);
 
   String(info.text).split(/\r?\n/).forEach((line, index) => {
     const tspan = document.createElementNS("http://www.w3.org/2000/svg", "tspan");
     tspan.textContent = line;
-    tspan.setAttribute("x", textNode.getAttribute("x") || "0");
+    tspan.setAttribute("x", anchorX);
     if (index === 0) {
       tspan.setAttribute("y", textNode.getAttribute("y") || "0");
     } else {
