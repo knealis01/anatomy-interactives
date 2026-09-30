@@ -24,7 +24,7 @@ const state = {
   animationTimer: null,
   isReducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
   // Sequence Builder State
-  userSequence: []
+  sequenceSteps: []
 };
 
 // 3. Stale-While-Revalidate Caching Helper
@@ -84,22 +84,6 @@ function injectAnimationStyles() {
     }
     .svg-fade-transition {
       transition: opacity var(--anim-duration, 0.6s) ease-in-out;
-    }
-    .sequence-item {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 10px 14px;
-      margin-bottom: 8px;
-      background: #f4f6f8;
-      border: 1px solid #ccc;
-      border-radius: 4px;
-    }
-    .sequence-controls button {
-      margin-left: 4px;
-      min-height: 44px;
-      padding: 6px 12px;
-      cursor: pointer;
     }
     .playback-controls {
       display: flex;
@@ -493,99 +477,114 @@ function clearSvgEffects() {
   });
 }
 
-// TEMPLATE 3: Process Sequence Builder
+// TEMPLATE 3: Sequence Builder — reveals SVG layers one at a time, in a
+// fixed order, advancing only on explicit button click (no autoplay timer),
+// and stopping for good once the last step has been revealed.
 function initSequenceBuilder(container) {
-  const sequences = (state.config && state.config.sequences) || [
-    { item_id: "seq-1", label: "Deoxygenated blood enters Right Atrium", expected_order: 1, feedback: "Blood always enters the right atrium first from the vena cava." },
-    { item_id: "seq-2", label: "Blood flows through Tricuspid Valve to Right Ventricle", expected_order: 2, feedback: "The tricuspid valve leads into the right ventricular chamber." },
-    { item_id: "seq-3", label: "Right Ventricle pumps blood to Pulmonary Artery", expected_order: 3, feedback: "Deoxygenated blood travels via the pulmonary artery toward the lungs." },
-    { item_id: "seq-4", label: "Oxygenated blood returns via Pulmonary Veins to Left Atrium", expected_order: 4, feedback: "Freshly oxygenated blood returns through pulmonary veins into the left atrium." }
+  const rows = (state.config && state.config.sequences) || [
+    { item_id: "seq-1", element_id: "Label_Right_atrium", order: 1, caption: "Deoxygenated blood enters the Right Atrium." },
+    { item_id: "seq-2", element_id: "Label_Right_ventricle", order: 2, caption: "Blood flows through the Tricuspid Valve into the Right Ventricle." },
+    { item_id: "seq-3", element_id: "Label_Pulmonary_artery", order: 3, caption: "Blood is pumped to the lungs via the Pulmonary Artery." },
+    { item_id: "seq-4", element_id: "Label_Left_atrium", order: 4, caption: "Oxygenated blood returns to the Left Atrium via the Pulmonary Veins." }
   ];
 
-  state.userSequence = [...sequences].sort(() => Math.random() - 0.5);
+  // Accept either `element_id` (matches the `animations` tab convention) or
+  // a bare `item_id` for sheets that reuse it as the SVG id, and sort by
+  // `order`/`expected_order` since Sheet rows aren't guaranteed pre-sorted.
+  const sequence = rows
+    .map((row, i) => ({
+      elementId: row.element_id || row.item_id,
+      order: Number(row.order || row.expected_order) || i + 1,
+      caption: row.caption || row.label || ""
+    }))
+    .sort((a, b) => a.order - b.order);
 
-  const wrapper = document.createElement("div");
-  wrapper.id = "sequence-list-container";
-  
-  const checkBtn = document.createElement("button");
-  checkBtn.type = "button";
-  checkBtn.textContent = "Check Sequence Order";
-  checkBtn.style.marginTop = "12px";
-  checkBtn.style.padding = "10px 16px";
-  checkBtn.style.minHeight = "44px";
+  state.sequenceSteps = sequence;
+  state.currentStepIndex = -1; // nothing revealed yet
 
-  const feedbackBox = document.createElement("div");
-  feedbackBox.className = "caption-box";
-  feedbackBox.id = "sequence-feedback";
-  feedbackBox.style.display = "none";
-
-  container.appendChild(wrapper);
-  container.appendChild(checkBtn);
-  container.appendChild(feedbackBox);
-
-  renderSequenceList(wrapper);
-
-  checkBtn.addEventListener("click", () => {
-    let isCorrect = true;
-    let feedbackText = "Great job! The sequence order is completely correct.";
-
-    for (let i = 0; i < state.userSequence.length; i++) {
-      if (state.userSequence[i].expected_order !== i + 1) {
-        isCorrect = false;
-        feedbackText = `Not quite. Examine step ${i + 1}: "${state.userSequence[i].label}". ${state.userSequence[i].feedback}`;
-        break;
-      }
-    }
-
-    feedbackBox.style.display = "block";
-    feedbackBox.textContent = feedbackText;
-    announceStatus(feedbackText);
+  // Hide every target layer up front so "Reveal Next" builds the
+  // illustration up in order rather than starting fully visible.
+  sequence.forEach((step) => {
+    const el = document.getElementById(step.elementId);
+    if (el) el.classList.add("is-hidden");
   });
+
+  const controlsDiv = document.createElement("div");
+  controlsDiv.className = "playback-controls";
+  controlsDiv.innerHTML = `
+    <button type="button" id="btn-reveal-next">Reveal Next ⏭</button>
+    <button type="button" id="btn-sequence-restart" aria-label="Restart sequence">↺ Restart</button>
+    <label style="margin-left:12px; cursor:pointer;">
+      <input type="checkbox" id="chk-reduced-motion-seq" ${state.isReducedMotion ? "checked" : ""}> Reduce Motion
+    </label>
+  `;
+
+  const captionBox = document.createElement("div");
+  captionBox.className = "caption-box";
+  captionBox.id = "sequence-caption";
+  captionBox.setAttribute("aria-live", "polite");
+  captionBox.textContent = `Ready — ${sequence.length} steps. Click "Reveal Next" to begin.`;
+
+  container.appendChild(controlsDiv);
+  container.appendChild(captionBox);
+
+  const btnNext = document.getElementById("btn-reveal-next");
+  const btnRestart = document.getElementById("btn-sequence-restart");
+  const chkMotion = document.getElementById("chk-reduced-motion-seq");
+
+  chkMotion.addEventListener("change", (e) => {
+    state.isReducedMotion = e.target.checked;
+    announceStatus(`Reduced motion ${state.isReducedMotion ? "enabled" : "disabled"}.`);
+  });
+
+  btnNext.addEventListener("click", () => revealNextInSequence(btnNext, captionBox));
+  btnRestart.addEventListener("click", () => restartSequence(btnNext, captionBox));
 }
 
-function renderSequenceList(container) {
-  container.innerHTML = "";
-  
-  state.userSequence.forEach((item, index) => {
-    const itemRow = document.createElement("div");
-    itemRow.className = "sequence-item";
-    
-    const labelSpan = document.createElement("span");
-    labelSpan.textContent = `${index + 1}. ${item.label}`;
+function revealNextInSequence(btnNext, captionBox) {
+  const sequence = state.sequenceSteps;
+  if (state.currentStepIndex >= sequence.length - 1) return; // already played through once
 
-    const controls = document.createElement("div");
-    controls.className = "sequence-controls";
+  state.currentStepIndex++;
+  const step = sequence[state.currentStepIndex];
+  const el = document.getElementById(step.elementId);
 
-    const moveUpBtn = document.createElement("button");
-    moveUpBtn.type = "button";
-    moveUpBtn.textContent = "▲ Move Up";
-    moveUpBtn.disabled = index === 0;
-    moveUpBtn.setAttribute("aria-label", `Move ${item.label} up`);
+  if (el) {
+    el.classList.remove("is-hidden");
+    if (!state.isReducedMotion) {
+      el.style.setProperty("--anim-duration", "600ms");
+      el.style.opacity = "0";
+      el.classList.add("svg-fade-transition");
+      requestAnimationFrame(() => { el.style.opacity = "1"; });
+    }
+  }
 
-    const moveDownBtn = document.createElement("button");
-    moveDownBtn.type = "button";
-    moveDownBtn.textContent = "▼ Move Down";
-    moveDownBtn.disabled = index === state.userSequence.length - 1;
-    moveDownBtn.setAttribute("aria-label", `Move ${item.label} down`);
+  const stepLabel = `Step ${state.currentStepIndex + 1} of ${sequence.length}: ${step.caption}`;
+  captionBox.textContent = stepLabel;
+  announceStatus(stepLabel);
 
-    moveUpBtn.addEventListener("click", () => {
-      [state.userSequence[index - 1], state.userSequence[index]] = [state.userSequence[index], state.userSequence[index - 1]];
-      renderSequenceList(container);
-      announceStatus(`Moved ${item.label} to position ${index}.`);
-    });
+  if (state.currentStepIndex >= sequence.length - 1) {
+    btnNext.disabled = true;
+    btnNext.textContent = "Sequence Complete";
+    announceStatus("Sequence complete.");
+  }
+}
 
-    moveDownBtn.addEventListener("click", () => {
-      [state.userSequence[index], state.userSequence[index + 1]] = [state.userSequence[index + 1], state.userSequence[index]];
-      renderSequenceList(container);
-      announceStatus(`Moved ${item.label} to position ${index + 2}.`);
-    });
-
-    controls.appendChild(moveUpBtn);
-    controls.appendChild(moveDownBtn);
-    itemRow.appendChild(labelSpan);
-    itemRow.appendChild(controls);
-    container.appendChild(itemRow);
+function restartSequence(btnNext, captionBox) {
+  state.sequenceSteps.forEach((step) => {
+    const el = document.getElementById(step.elementId);
+    if (el) {
+      el.classList.add("is-hidden");
+      el.classList.remove("svg-fade-transition");
+      el.style.opacity = "";
+    }
   });
+
+  state.currentStepIndex = -1;
+  btnNext.disabled = false;
+  btnNext.textContent = "Reveal Next ⏭";
+  captionBox.textContent = `Ready — ${state.sequenceSteps.length} steps. Click "Reveal Next" to begin.`;
+  announceStatus("Sequence reset.");
 }
 
 // 6. Utility: Screen Reader Announcements
