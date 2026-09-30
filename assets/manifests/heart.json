@@ -7,7 +7,10 @@
     224
   ],
   "elementCount": 19,
-  "issues": [],
+  "issues": [
+    "INFO: Added missing generic font fallback (sans-serif) to: HelveticaLTStd-Roman, 'TXJPX P+ Helvetica LT Std'",
+    "INFO: Added missing generic font fallback (serif) to: TimesLTStd-Roman, 'TXJPX P+ Times LT Std'"
+  ],
   "elements": [
     {
       "id": "Label_Right_ventricle",

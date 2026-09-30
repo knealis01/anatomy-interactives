@@ -13,9 +13,36 @@ const MANIFEST_DIR = path.join(__dirname, '../../assets/manifests');
   }
 });
 
+// Illustrator export bakes in the exact (often subsetted/licensed) font name
+// with no generic fallback. When that exact font isn't installed in a
+// visitor's browser, CSS falls through to the browser's own default font —
+// serif in most browsers — silently overriding whatever the artwork actually
+// intended. This appends a matching generic family (serif/sans-serif/
+// monospace) to any font-family rule that doesn't already declare one, so
+// the fallback still resembles the original design instead of the browser's
+// arbitrary default.
+function ensureGenericFontFallback(svgContent, issues) {
+  const genericKeywordPattern = /\b(serif|sans-serif|monospace|cursive|fantasy|system-ui)\b/i;
+
+  return svgContent.replace(/font-family:\s*([^;]+);/g, (match, familyList) => {
+    if (genericKeywordPattern.test(familyList)) return match; // already has a fallback
+
+    const lower = familyList.toLowerCase();
+    let generic = 'sans-serif';
+    if (/times|georgia|garamond|palatino|cambria|book antiqua|serif/.test(lower)) {
+      generic = 'serif';
+    } else if (/courier|consolas|monospace|\bmono\b/.test(lower)) {
+      generic = 'monospace';
+    }
+
+    if (issues) issues.push(`INFO: Added missing generic font fallback (${generic}) to: ${familyList.trim()}`);
+    return `font-family: ${familyList.trim()}, ${generic};`;
+  });
+}
+
 function cleanAndOptimizeSvg(svgContent, assetId) {
   const issues = [];
-  
+
   // 1. Check and preserve viewBox
   const viewBoxMatch = svgContent.match(/viewBox="([^"]+)"/i);
   if (!viewBoxMatch) {
@@ -58,6 +85,8 @@ function cleanAndOptimizeSvg(svgContent, assetId) {
     .replace(/<metadata[\s\S]*?<\/metadata>/gi, '') // remove metadata elements
     .replace(/\s+/g, ' ') // normalize whitespace
     .trim();
+
+  cleaned = ensureGenericFontFallback(cleaned, issues);
 
   // 5. Build Compact Element Manifest
   const elements = [];
