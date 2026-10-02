@@ -111,6 +111,10 @@
       max-height: 60vh;   /* tune: leaves room for the header, controls and caption */
     }
 
+    @supports (height: 1dvh) {
+      svg { max-height: 70dvh; }
+    }
+
     .is-hidden {
       display: none;
     }
