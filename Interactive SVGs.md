@@ -497,7 +497,7 @@ Three activity modes, chosen via `?mode=`:
  */
 
 // 1. Configuration & URL Parameters
-const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx_pM89Kk0Px4F1xfUgB_yg7POh5sN51b1p8xkSdMFh60lxXIg1jxgYUwv9uIFJdHPz/exec";
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzUJqCg1olF5dEWwskggKmBnYWFqYU5FRUyJL3Wfll8okSKOdbaN2TPdy9eg-hlb5no/exec";
 
 const urlParams = new URLSearchParams(window.location.search);
 const diagramId = (urlParams.get("diagram") || "heart").toLowerCase();
