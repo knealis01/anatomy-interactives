@@ -1453,7 +1453,7 @@ function listElementIdsFromSvg() {
 
   var idRe = /id="([^"]+)"/g;
   var seen = {};
-  var rows = [["element_id", "looks_like"]];
+  var rows = [["element_id", "id_type"]];
   var match;
 
   while ((match = idRe.exec(svgText)) !== null) {
