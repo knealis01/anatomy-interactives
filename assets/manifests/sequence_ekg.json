@@ -1,0 +1,17 @@
+{
+  "assetId": "sequence_ekg",
+  "viewBox": [
+    0,
+    0,
+    424,
+    343
+  ],
+  "elementCount": 8,
+  "issues": [
+    "INFO: Added missing generic font fallback (sans-serif) to: HelveticaLTStd-BoldObl, AIMVGS+HelveticaLTStd-BoldObl",
+    "INFO: Added missing generic font fallback (sans-serif) to: HelveticaLTStd-Roman, AIMVGS+HelveticaLTStd-Roman",
+    "INFO: Added missing generic font fallback (sans-serif) to: HelveticaLTStd-Bold, AIMVGS+HelveticaLTStd-Bold",
+    "INFO: Added missing generic font fallback (serif) to: TimesLTStd-Roman, 'AIMVG S+ Times LT Std'"
+  ],
+  "elements": []
+}
