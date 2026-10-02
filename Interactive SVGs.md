@@ -65,16 +65,30 @@ Every tab is filtered by `diagram_id` (e.g. `heart`) so one Sheet can drive mult
 | Column | Notes |
 |---|---|
 | `activity_id` | `diagram_id` |
-| `item_id` | **must hold the real SVG element id** (e.g. `Label_Right_atrium`) — this tab has no dedicated `element_id` column, so `item_id` doubles as the target |
+| `item_id` | **must hold the real SVG element id** (e.g. `Step1_P_wave`) — this tab has no dedicated `element_id` column, so `item_id` doubles as the target. Any layer id works; the `Label_` prefix only matters for Label Studio |
 | `expected_order` | 1, 2, 3… reveal order |
 | `caption` | narration shown/announced when that layer is revealed |
-| `delay_ms` | optional; milliseconds to wait **before** this step appears when the viewer presses Play (e.g. `3000`). Blank → `0` for the first step, `3000` for the rest. Ignored by Reveal Next, which always reveals immediately |
-| `feedback` | unused by the current (v2) reveal activity; safe to leave blank |
+| `delay_ms` | optional; milliseconds to wait **before** this step appears when the viewer presses Play (e.g. `2000` = 2 s — not `2`, which is 2 ms). Blank → `0` for the first step, `3000` for the rest. Ignored by Reveal Next, which always reveals immediately |
+
+Layers not listed here (e.g. a `Static` background group, `Copyright`) stay visible throughout. Each listed layer appears as a whole, so group everything that should appear together at a step — label text, leader lines, artwork — under that step's layer in Illustrator.
+
+The former `feedback` column (from the v1 drag-to-order quiz) has been removed from the Sheet; `doGet()` still tolerates it being absent and just returns `feedback: ""`.
 
 ### `svg_raw` / `imported_labels` / `svg_element_ids` — authoring helper tabs
 Used by two Apps Script menu functions (Section 4D):
 - **Import labels from SVG** — paste raw SVG into `svg_raw!A1`, run the menu item, get `en_text | svg_id | visible_default` rows dumped into `imported_labels` to copy into `labels` (review manually — `diagram_id`/`es_text`/`tooltip_en`/`text_align` can't be scraped from the SVG and must be filled in by hand).
-- **List all element ids from SVG** — same `svg_raw` source, dumps every element id found (not just `Label_*`) into `svg_element_ids` as a copy-paste reference when filling in `element_id`/`item_id` for `animations`/`sequences`, to avoid typos.
+- **List all element ids from SVG** — same `svg_raw` source, dumps every element id found (not just `Label_*`) into `svg_element_ids` as a copy-paste reference when filling in `element_id`/`item_id` for `animations`/`sequences`, to avoid typos. The second column, `id_type`, is a prefix-based guess (`label`/`structure`/`layer`/`other`) for reference only — nothing reads it.
+
+**Sheets cell limit:** a cell holds at most 50,000 characters, and a detailed illustration easily exceeds that (the EKG source is ~1.7 MB, almost all `<path>` data). Neither helper needs the drawing data — they only read `<g id>` groups and `<text>` — so paste a slimmed copy with shapes, images and `<defs>` stripped. On macOS this puts one on the clipboard:
+
+```bash
+perl -0pe 's/<\?xml.*?\?>//s; s/<defs>.*?<\/defs>//s;
+  s/<(path|image|polygon|polyline|rect|circle|line|ellipse)\b[^>]*?\/>//gs;
+  s/<(path|image|polygon|polyline|rect|circle|line|ellipse)\b[^>]*>.*?<\/\1>//gs;
+  s/\s+/ /g; s/> </></g;' assets/source/<file>.svg | pbcopy
+```
+
+Known limitation of **Import labels from SVG**: it takes only the *first* `<text>` inside each `Label_*` group, so a group containing extra callouts (e.g. "AV node" ahead of the real caption) imports the wrong text — fix it in `imported_labels` or move the extra text out of that layer.
 
 ## 4. Technical Artifacts & Source Code
 
@@ -268,7 +282,12 @@ function processAllSvgs() {
 processAllSvgs();
 ```
 
-**Illustrator export settings** that pair with this pipeline (see Section 6 for the full checklist): Styling → Internal CSS ("Style Elements"); Font → SVG (not "Convert to Outlines" — label captions must stay real `<text>` for the patching logic below to work); Object IDs → Layer Names; Responsive → on.
+**Illustrator export settings** that pair with this pipeline — use **File → Export → Export As… → SVG** (or Export for Screens → gear icon → SVG); the legacy **File → Save As → SVG** dialog has no Object IDs option and escapes underscores in ids:
+- **Styling → Internal CSS.** Not Presentation Attributes: those write `font-family="…"` attributes, which `ensureGenericFontFallback()` doesn't match, so the serif-fallback bug would return.
+- **Font → SVG** for Label Studio diagrams (label captions must stay real `<text>` for `patchLabelText()` to work). **Convert to Outlines** is fine for `sequence-builder`/`layer-explorer` diagrams, whose text is never patched — it renders identically everywhere and sidesteps font fallback entirely, at the cost of the artwork text not being screen-reader-readable (so step captions must carry the content).
+- **Images → Embed.** Not Preserve/Link: a linked image exports as a local file path that won't exist on the server (and isn't caught by the `http` external-link check).
+- **Object IDs → Layer Names.** Layer names become element ids verbatim, so name layers exactly as the Sheet will reference them — letters, digits, underscores only, each unique.
+- **Minify → off; Responsive → on.**
 
 ### B. Application Shell (`index.html`)
 
@@ -1730,16 +1749,25 @@ Note: this `doGet()` has no server-side `CacheService` layer (unlike an earlier 
 
 - **Animation/sequence captions are English-only.** The `animations` and `sequences` tabs each have a single `caption` column, no `caption_es` equivalent — switching to Spanish only re-localizes labels, the diagram title/description, and the fixed UI chrome, not step narration. Extending this would mean adding `caption_es` columns and reading them the same way `labels.es_text` is read.
 - **`text_align` only supports `left`/`right`**, not vertical (`top`/`bottom`) growth direction — fine for this two-column layout (labels flanking the illustration left/right), but would need a different anchor axis for a diagram with labels above/below.
-- Diagram/label data for a new illustration is entirely manual to author (no bulk-import beyond id/caption scraping) — `feedback` in `sequences` is unused by the current activity and safe to ignore, kept only because Apps Script code once used it.
+- Diagram/label data for a new illustration is entirely manual to author (no bulk-import beyond id/caption scraping).
+- **Sheet matching is exact apart from case.** `doGet()` lowercases `diagram_id`/`activity_id`/`lang` but doesn't trim them, so a trailing space — or a blank `lang` in `diagram_meta` — silently drops the row. If a title, caption or step is missing, check the live API output first: `<APPS_SCRIPT_URL>?diagram=<id>&lang=en`.
+- **No title → header stays "Loading illustration…".** `applyDiagramMeta()` only replaces the placeholder when the Sheet supplies a title, so a diagram without a `diagram_meta` row looks stuck on loading.
+- **`localStorage` quota isn't handled.** `fetchWithCache()` stores each prepared SVG uncompressed (the EKG is ~1.7 MB) and an initial-load `setItem` that exceeds the ~5 MB per-origin quota throws, surfacing as "Failed to load illustration asset" even though the fetch succeeded. Note that all `<user>.github.io` project sites share one origin. Wrapping the write in `try/catch` would fix it if more large diagrams are added.
+- **The manifest's `elements` list only covers `Label_`/`structure-`/`layer-` ids**, so sequence diagrams using other names (e.g. `Step1_…`) get an empty list. Nothing at runtime reads the manifest.
 
 ## 6. Workflow
 
 ### Adding a new illustration
-1. Export from Illustrator via **File → Export → Export As… → SVG** (Styling: Internal CSS; Font: SVG for Label Studio diagrams, since label text is patched from the Sheet — Convert to Outlines is fine for sequence-builder/layer-explorer diagrams; Images: Embed; Object IDs: Layer Names; Minify off; Responsive on). Use a lowercase filename — `?diagram=` is lowercased before fetching.
-2. Drop the file in `assets/source/` — any number of SVGs can go here.
-3. Run `node tools/prepare-svg/index.js` — batch-processes every `.svg` in `assets/source/` into `assets/prepared/` + `assets/manifests/`, auto-repairing missing font fallbacks and flagging duplicate ids / missing viewBox / inline scripts along the way.
-4. Add Sheet rows for the new `diagram_id` across whichever of `labels` / `diagram_meta` / `animations` / `sequences` tabs the new illustration needs, using `svg_element_ids` (via the "List all element ids from SVG" menu item) to avoid id typos.
-5. Load it with `index.html?diagram=<id>&mode=<mode>`.
+1. Export from Illustrator with the settings in Section 4A (Export As, not Save As; Object IDs: Layer Names). Use an **all-lowercase filename** — `?diagram=` is lowercased before fetching, and GitHub Pages is case-sensitive. When renaming only the case of a tracked file on macOS, use `git mv -f Old.svg old.svg`; a Finder rename isn't seen by git (`core.ignorecase`).
+2. Drop the file in `assets/source/` alongside the existing sources — keep every original there, since `prepared/` is regenerated from it.
+3. Run `node tools/prepare-svg/index.js` from the repo root — batch-processes every `.svg` in `assets/source/` into `assets/prepared/` + `assets/manifests/`, decoding Illustrator `_xHH_` id escapes, auto-repairing missing font fallbacks, and flagging duplicate ids / missing viewBox / inline scripts. Re-processing unchanged sources is a no-op in git.
+4. Add Sheet rows for the new `diagram_id` across whichever of `labels` / `diagram_meta` / `animations` / `sequences` tabs the new illustration needs — always including a `diagram_meta` row with `lang` filled in — using `svg_element_ids` (via the "List all element ids from SVG" menu item) to avoid id typos.
+5. Preview, then commit the source, prepared SVG and manifest together and push.
+
+### Previewing
+- **Live:** `https://knealis01.github.io/anatomy-interactives/?diagram=<id>&mode=<mode>` (GitHub Pages updates a minute or two after a push).
+- **Local:** opening `index.html` from Finder fails (`file://` blocks the SVG fetch). Serve the folder instead — `python3 -m http.server 8000` — and open `http://localhost:8000/?diagram=<id>&mode=<mode>`.
+- Either way, run `localStorage.clear()` in the console and reload after changing the Sheet or an SVG, since the cached copy is shown first.
 
 ### Testing a Sheet/backend change
 1. Edit `~/Desktop/code.gs`, paste into the Apps Script editor.
