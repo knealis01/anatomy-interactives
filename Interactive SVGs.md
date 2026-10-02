@@ -1007,15 +1007,11 @@ function applyAnimationStep(stepData) {
   if (captionBox) captionBox.textContent = `Step ${stepData.order || state.currentStepIndex + 1}: ${stepData.caption}`;
 
   const targetEl = document.getElementById(stepData.element_id);
-  if (!targetEl) {
-    announceStatus(`Step ${stepData.order}: ${stepData.caption}`);
-    return;
-  }
+  if (!targetEl) return;
 
   if (state.isReducedMotion) {
     targetEl.style.display = "";
     targetEl.classList.add("svg-highlight");
-    announceStatus(`Step ${stepData.order}: ${stepData.caption}`);
     return;
   }
 
@@ -1041,8 +1037,6 @@ function applyAnimationStep(stepData) {
       targetEl.classList.add("svg-highlight");
       break;
   }
-
-  announceStatus(`Step ${stepData.order}: ${stepData.caption}`);
 }
 
 function playAnimation(steps, playButton) {
@@ -1166,7 +1160,6 @@ function revealNextInSequence(btnNext, captionBox) {
 
   const stepLabel = `Step ${state.currentStepIndex + 1} of ${sequence.length}: ${step.caption}`;
   captionBox.textContent = stepLabel;
-  announceStatus(stepLabel);
 
   if (state.currentStepIndex >= sequence.length - 1) {
     btnNext.disabled = true;
@@ -1194,7 +1187,7 @@ function restartSequence(btnNext, captionBox) {
 
 // 6. Utility: Screen Reader Announcements
 function announceStatus(message) {
-  const announcer = document.getElementById("status-announcer");
+  const announcer = document.getElementById("sr-status");
   if (announcer) {
     announcer.textContent = message;
   }
