@@ -7,6 +7,13 @@
     343
   ],
   "elementCount": 8,
-  "issues": [],
+  "issues": [
+    "INFO: Decoded Illustrator id escape: Step6_x5F_Repolarization -> Step6_Repolarization",
+    "INFO: Decoded Illustrator id escape: Step5_x5F_T_wave -> Step5_T_wave",
+    "INFO: Decoded Illustrator id escape: Step4_x5F_ST_segment -> Step4_ST_segment",
+    "INFO: Decoded Illustrator id escape: Step3_x5F_QRS_segment -> Step3_QRS_segment",
+    "INFO: Decoded Illustrator id escape: Step2_x5F_PR_segment -> Step2_PR_segment",
+    "INFO: Decoded Illustrator id escape: Step1_x5F_P_wave -> Step1_P_wave"
+  ],
   "elements": []
 }
