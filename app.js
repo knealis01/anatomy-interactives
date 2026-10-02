@@ -6,7 +6,7 @@
  */
 
 // 1. Configuration & URL Parameters
-const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbydklwxJqBkiheXsdKAF8E_YBvMYEcePkkXYtAKy4h6S_BP8W5hAFpYyM5UVctUM7qE/exec";
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx_pM89Kk0Px4F1xfUgB_yg7POh5sN51b1p8xkSdMFh60lxXIg1jxgYUwv9uIFJdHPz/exec";
 
 const urlParams = new URLSearchParams(window.location.search);
 const diagramId = (urlParams.get("diagram") || "heart").toLowerCase();
@@ -41,7 +41,10 @@ const UI_STRINGS = {
     sequenceComplete: "Sequence Complete",
     sequenceCompleteAnnounce: "Sequence complete.",
     sequenceReset: "Sequence reset.",
-    sequenceReady: (n) => `Ready — ${n} steps. Click "Reveal Next" to begin.`,
+    sequenceReady: (n) => `Ready — ${n} steps. Press "Play" or "Reveal Next" to begin.`,
+    sequencePlaying: "Sequence playing.",
+    sequencePaused: "Sequence paused.",
+    noSequenceSteps: "No sequence steps were found for this illustration.",
     langEnglish: "English",
     langSpanish: "Español",
     langSwitched: "Switched to English.",
@@ -70,7 +73,10 @@ const UI_STRINGS = {
     sequenceComplete: "Secuencia completa",
     sequenceCompleteAnnounce: "Secuencia completa.",
     sequenceReset: "Secuencia reiniciada.",
-    sequenceReady: (n) => `Listo — ${n} pasos. Haz clic en "Mostrar siguiente" para comenzar.`,
+    sequenceReady: (n) => `Listo — ${n} pasos. Pulsa "Reproducir" o "Mostrar siguiente" para comenzar.`,
+    sequencePlaying: "Secuencia en reproducción.",
+    sequencePaused: "Secuencia en pausa.",
+    noSequenceSteps: "No se encontraron pasos de secuencia para esta ilustración.",
     langEnglish: "English",
     langSpanish: "Español",
     langSwitched: "Cambiado a español.",
@@ -95,6 +101,8 @@ const state = {
   isReducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
   // Sequence Builder State
   sequenceSteps: [],
+  isSequencePlaying: false,
+  sequenceTimer: null,
   // Language Toggle State
   isSwitchingLanguage: false
 };
@@ -250,6 +258,7 @@ async function initInteractiveApp() {
   try {
     const configData = await fetchWithCache(`${APPS_SCRIPT_URL}?diagram=${diagramId}&lang=${lang}`, apiKey);
     state.config = configData;
+    initLanguageToggle(state.config.languages);
     applyDiagramMeta(state.config.meta);
     renderActiveMode(toolbarContainer);
     announceStatus("Activity data loaded and ready.");
@@ -296,14 +305,24 @@ async function setLanguage(newLang) {
   }
 }
 
-function initLanguageToggle() {
+const LANGUAGE_OPTIONS = [
+  { code: "en", label: () => UI_STRINGS.en.langEnglish },
+  { code: "es", label: () => UI_STRINGS.es.langSpanish }
+];
+
+// Shows a button per language the Sheet actually has content for (the API's
+// `languages` list), and hides the toggle entirely when there's only one —
+// e.g. a diagram with no Spanish labels or title gets no EN/ES buttons.
+function initLanguageToggle(availableLanguages) {
   const host = document.getElementById("lang-toggle");
   if (!host) return;
 
-  [
-    { code: "en", label: () => UI_STRINGS.en.langEnglish },
-    { code: "es", label: () => UI_STRINGS.es.langSpanish }
-  ].forEach(({ code, label }) => {
+  host.innerHTML = "";
+  const options = LANGUAGE_OPTIONS.filter(({ code }) => (availableLanguages || []).includes(code));
+  host.hidden = options.length < 2;
+  if (host.hidden) return;
+
+  options.forEach(({ code, label }) => {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.textContent = label();
@@ -619,8 +638,11 @@ function clearSvgEffects() {
 }
 
 // TEMPLATE 3: Sequence Builder — reveals SVG layers one at a time, in a
-// fixed order, advancing only on explicit button click (no autoplay timer),
-// and stopping for good once the last step has been revealed.
+// fixed order. Viewers can step manually with "Reveal Next" or press Play to
+// auto-advance using each step's Sheet-authored `delay_ms`; either way it
+// stops for good once the last step has been revealed.
+const DEFAULT_SEQUENCE_DELAY_MS = 3000;
+
 function initSequenceBuilder(container) {
   const rows = (state.config && state.config.sequences) || [
     { item_id: "seq-1", element_id: "Label_Right_atrium", order: 1, caption: "Deoxygenated blood enters the Right Atrium." },
@@ -629,22 +651,15 @@ function initSequenceBuilder(container) {
     { item_id: "seq-4", element_id: "Label_Left_atrium", order: 4, caption: "Oxygenated blood returns to the Left Atrium via the Pulmonary Veins." }
   ];
 
-  // Accept either `element_id` (matches the `animations` tab convention) or
-  // a bare `item_id` for sheets that reuse it as the SVG id, and sort by
-  // `order`/`expected_order` since Sheet rows aren't guaranteed pre-sorted.
-  const sequence = rows
-    .map((row, i) => ({
-      elementId: row.element_id || row.item_id,
-      order: Number(row.order || row.expected_order) || i + 1,
-      caption: row.caption || row.label || ""
-    }))
-    .sort((a, b) => a.order - b.order);
+  const sequence = toSequenceSteps(rows);
 
+  stopSequenceTimer();
+  state.isSequencePlaying = false;
   state.sequenceSteps = sequence;
   state.currentStepIndex = -1; // nothing revealed yet
 
-  // Hide every target layer up front so "Reveal Next" builds the
-  // illustration up in order rather than starting fully visible.
+  // Hide every target layer up front so the illustration builds up in order
+  // rather than starting fully visible.
   sequence.forEach((step) => {
     const el = document.getElementById(step.elementId);
     if (el) el.classList.add("is-hidden");
@@ -653,6 +668,7 @@ function initSequenceBuilder(container) {
   const controlsDiv = document.createElement("div");
   controlsDiv.className = "playback-controls";
   controlsDiv.innerHTML = `
+    <button type="button" id="btn-sequence-play">${t("play")}</button>
     <button type="button" id="btn-reveal-next">${t("revealNext")}</button>
     <button type="button" id="btn-sequence-restart">${t("restart")}</button>
     <label style="margin-left:12px; cursor:pointer;">
@@ -664,27 +680,76 @@ function initSequenceBuilder(container) {
   captionBox.className = "caption-box";
   captionBox.id = "sequence-caption";
   captionBox.setAttribute("aria-live", "polite");
-  captionBox.textContent = t("sequenceReady")(sequence.length);
 
   container.appendChild(controlsDiv);
   container.appendChild(captionBox);
 
-  const btnNext = document.getElementById("btn-reveal-next");
+  const controls = {
+    btnPlay: document.getElementById("btn-sequence-play"),
+    btnNext: document.getElementById("btn-reveal-next"),
+    captionBox
+  };
   const btnRestart = document.getElementById("btn-sequence-restart");
   const chkMotion = document.getElementById("chk-reduced-motion-seq");
+
+  // An empty `sequences` result means no Sheet rows matched this diagram —
+  // say so instead of leaving buttons that silently do nothing.
+  if (sequence.length === 0) {
+    captionBox.textContent = t("noSequenceSteps");
+    controls.btnPlay.disabled = true;
+    controls.btnNext.disabled = true;
+    btnRestart.disabled = true;
+    return;
+  }
+
+  captionBox.textContent = t("sequenceReady")(sequence.length);
 
   chkMotion.addEventListener("change", (e) => {
     state.isReducedMotion = e.target.checked;
     announceStatus(state.isReducedMotion ? t("motionEnabled") : t("motionDisabled"));
   });
 
-  btnNext.addEventListener("click", () => revealNextInSequence(btnNext, captionBox));
-  btnRestart.addEventListener("click", () => restartSequence(btnNext, captionBox));
+  controls.btnPlay.addEventListener("click", () => toggleSequencePlayback(controls));
+  controls.btnNext.addEventListener("click", () => {
+    revealNextInSequence(controls);
+    if (state.isSequencePlaying) scheduleNextReveal(controls);
+  });
+  btnRestart.addEventListener("click", () => restartSequence(controls));
 }
 
-function revealNextInSequence(btnNext, captionBox) {
+// Normalizes Sheet rows into ordered steps. Accepts either `element_id`
+// (matches the `animations` tab convention) or a bare `item_id` for sheets
+// that reuse it as the SVG id, and sorts by `order`/`expected_order` since
+// Sheet rows aren't guaranteed pre-sorted.
+function toSequenceSteps(rows) {
+  return rows
+    .map((row, i) => ({
+      elementId: row.element_id || row.item_id,
+      order: Number(row.order || row.expected_order) || i + 1,
+      caption: row.caption || row.label || "",
+      delayMs: row.delay_ms
+    }))
+    .sort((a, b) => a.order - b.order)
+    .map((step, i) => ({ ...step, delayMs: resolveDelayMs(step.delayMs, i) }));
+}
+
+// Blank/invalid delay: start the first step right away, wait the default
+// between the rest.
+function resolveDelayMs(raw, index) {
+  const ms = Number(raw);
+  if (raw === "" || raw == null || !Number.isFinite(ms)) {
+    return index === 0 ? 0 : DEFAULT_SEQUENCE_DELAY_MS;
+  }
+  return Math.max(0, ms);
+}
+
+function isSequenceComplete() {
+  return state.currentStepIndex >= state.sequenceSteps.length - 1;
+}
+
+function revealNextInSequence(controls) {
   const sequence = state.sequenceSteps;
-  if (state.currentStepIndex >= sequence.length - 1) return; // already played through once
+  if (isSequenceComplete()) return; // already played through once
 
   state.currentStepIndex++;
   const step = sequence[state.currentStepIndex];
@@ -700,17 +765,55 @@ function revealNextInSequence(btnNext, captionBox) {
     }
   }
 
-  const stepLabel = `Step ${state.currentStepIndex + 1} of ${sequence.length}: ${step.caption}`;
-  captionBox.textContent = stepLabel;
+  controls.captionBox.textContent = `Step ${state.currentStepIndex + 1} of ${sequence.length}: ${step.caption}`;
 
-  if (state.currentStepIndex >= sequence.length - 1) {
-    btnNext.disabled = true;
-    btnNext.textContent = t("sequenceComplete");
+  if (isSequenceComplete()) {
+    stopSequenceTimer();
+    state.isSequencePlaying = false;
+    controls.btnPlay.textContent = t("play");
+    controls.btnPlay.disabled = true;
+    controls.btnNext.disabled = true;
+    controls.btnNext.textContent = t("sequenceComplete");
     announceStatus(t("sequenceCompleteAnnounce"));
   }
 }
 
-function restartSequence(btnNext, captionBox) {
+// Waits the upcoming step's `delay_ms`, reveals it, and chains to the next
+// until the sequence ends or playback is paused.
+function scheduleNextReveal(controls) {
+  stopSequenceTimer();
+  if (isSequenceComplete()) return;
+
+  const upcoming = state.sequenceSteps[state.currentStepIndex + 1];
+  state.sequenceTimer = setTimeout(() => {
+    revealNextInSequence(controls);
+    if (state.isSequencePlaying) scheduleNextReveal(controls);
+  }, upcoming.delayMs);
+}
+
+function toggleSequencePlayback(controls) {
+  if (state.isSequencePlaying) {
+    state.isSequencePlaying = false;
+    stopSequenceTimer();
+    controls.btnPlay.textContent = t("play");
+    announceStatus(t("sequencePaused"));
+  } else {
+    state.isSequencePlaying = true;
+    controls.btnPlay.textContent = t("pause");
+    announceStatus(t("sequencePlaying"));
+    scheduleNextReveal(controls);
+  }
+}
+
+function stopSequenceTimer() {
+  clearTimeout(state.sequenceTimer);
+  state.sequenceTimer = null;
+}
+
+function restartSequence(controls) {
+  stopSequenceTimer();
+  state.isSequencePlaying = false;
+
   state.sequenceSteps.forEach((step) => {
     const el = document.getElementById(step.elementId);
     if (el) {
@@ -721,9 +824,11 @@ function restartSequence(btnNext, captionBox) {
   });
 
   state.currentStepIndex = -1;
-  btnNext.disabled = false;
-  btnNext.textContent = t("revealNext");
-  captionBox.textContent = t("sequenceReady")(state.sequenceSteps.length);
+  controls.btnPlay.disabled = false;
+  controls.btnPlay.textContent = t("play");
+  controls.btnNext.disabled = false;
+  controls.btnNext.textContent = t("revealNext");
+  controls.captionBox.textContent = t("sequenceReady")(state.sequenceSteps.length);
   announceStatus(t("sequenceReset"));
 }
 
@@ -736,6 +841,5 @@ function announceStatus(message) {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-  initLanguageToggle();
   initInteractiveApp();
 });

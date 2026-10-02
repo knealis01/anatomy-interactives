@@ -7,7 +7,7 @@ A configuration-driven authoring system that turns static scientific vector illu
 - **Decoupled asset architecture** — SVGs live as standalone files in `assets/prepared/`, not embedded in `index.html` or stored in spreadsheet cells.
 - **Single front-end engine shell** — `index.html` + `app.js` dynamically render any illustration and any interactive mode based on URL query parameters (e.g. `index.html?diagram=heart&mode=layer-explorer&lang=es`).
 - **Centralized Google Sheet** acts as the authoring database and API endpoint (via an Apps Script web app), storing metadata, localized labels, animation/reveal sequences, all keyed by `diagram_id`.
-- **Bilingual (EN/ES)** — a Language toggle in the page itself re-fetches Sheet data and rebuilds the active activity in place, no reload. Sheet-authored content (labels, diagram title/description) is looked up per-language from the Sheet; fixed UI chrome (button labels, instructions, banners) is localized via a small in-code dictionary, since it isn't spreadsheet content.
+- **Bilingual (EN/ES)** — a Language toggle in the page itself re-fetches Sheet data and rebuilds the active activity in place, no reload. The toggle only appears for diagrams that actually have Spanish content in the Sheet (any `es_text` in `labels`, or an `es` row in `diagram_meta`) — the API reports this as `languages`. Sheet-authored content (labels, diagram title/description) is looked up per-language from the Sheet; fixed UI chrome (button labels, instructions, banners) is localized via a small in-code dictionary, since it isn't spreadsheet content.
 - **WCAG 2.2 AA-oriented** — every pointer-driven interaction has a keyboard-operable HTML control, `aria-live` announcements, visible focus states, and a Reduce Motion toggle.
 
 ## 2. Directory & Repository Layout
@@ -61,13 +61,14 @@ Every tab is filtered by `diagram_id` (e.g. `heart`) so one Sheet can drive mult
 | `duration` | milliseconds |
 | `caption` | narration shown/announced for that step |
 
-### `sequences` tab — Sequence Builder (one-pass, button-triggered layer reveal)
+### `sequences` tab — Sequence Builder (one-pass layer reveal, manual or timed)
 | Column | Notes |
 |---|---|
 | `activity_id` | `diagram_id` |
 | `item_id` | **must hold the real SVG element id** (e.g. `Label_Right_atrium`) — this tab has no dedicated `element_id` column, so `item_id` doubles as the target |
 | `expected_order` | 1, 2, 3… reveal order |
 | `caption` | narration shown/announced when that layer is revealed |
+| `delay_ms` | optional; milliseconds to wait **before** this step appears when the viewer presses Play (e.g. `3000`). Blank → `0` for the first step, `3000` for the rest. Ignored by Reveal Next, which always reveals immediately |
 | `feedback` | unused by the current (v2) reveal activity; safe to leave blank |
 
 ### `svg_raw` / `imported_labels` / `svg_element_ids` — authoring helper tabs
@@ -301,6 +302,10 @@ Purely structural — no diagram-specific markup, no embedded SVG. `app.js` inje
       margin-bottom: 0.75rem;
     }
 
+    .lang-toggle[hidden] {
+      display: none;
+    }
+
     .lang-toggle button {
       padding: 0.3rem 0.6rem;
       border-radius: 0.4rem;
@@ -412,7 +417,7 @@ Purely structural — no diagram-specific markup, no embedded SVG. `app.js` inje
   <div id="sr-status" aria-live="polite" class="sr-only"></div>
 
   <div class="diagram-wrap">
-    <div class="lang-toggle" role="group" aria-label="Language" id="lang-toggle"></div>
+    <div class="lang-toggle" role="group" aria-label="Language" id="lang-toggle" hidden></div>
 
     <header>
       <h1 id="diagram-title">Loading illustration…</h1>
@@ -453,7 +458,7 @@ Note on the `.load-error:not([hidden])` rule: a plain `.load-error { display: fl
 Three activity modes, chosen via `?mode=`:
 - **`label-studio`** (default) — per-label show/hide toggle buttons, built from live `[id^="Label_"]` elements in the SVG, patched with Sheet-provided text/tooltip/visibility. Includes a "Toggle All" button.
 - **`layer-explorer`** — Play/Pause/Prev/Next scrubber through `animations` tab steps, each step running a `highlight`/`pulse`/`fade-in` action on one SVG element. Supports Reduce Motion.
-- **`sequence-builder`** — one-pass, button-triggered reveal through `sequences` tab steps: every target layer starts hidden, a single "Reveal Next" button reveals them one at a time in order, no autoplay timer, and it stops for good (button disables) once the last step is revealed. A separate Restart button is the only way back to the start.
+- **`sequence-builder`** — one-pass reveal through `sequences` tab steps: every target layer starts hidden. **Play/Pause** auto-advances, waiting each step's `delay_ms` before revealing it; **Reveal Next** reveals the next step immediately (and, while playing, restarts the wait for the one after). It stops for good (Play and Reveal Next disable) once the last step is revealed; Restart is the only way back to the start. If the Sheet returns no rows for the diagram, the caption says so and the buttons are disabled.
 
 ```javascript
 /**
@@ -464,7 +469,7 @@ Three activity modes, chosen via `?mode=`:
  */
 
 // 1. Configuration & URL Parameters
-const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbydklwxJqBkiheXsdKAF8E_YBvMYEcePkkXYtAKy4h6S_BP8W5hAFpYyM5UVctUM7qE/exec";
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx_pM89Kk0Px4F1xfUgB_yg7POh5sN51b1p8xkSdMFh60lxXIg1jxgYUwv9uIFJdHPz/exec";
 
 const urlParams = new URLSearchParams(window.location.search);
 const diagramId = (urlParams.get("diagram") || "heart").toLowerCase();
@@ -499,7 +504,10 @@ const UI_STRINGS = {
     sequenceComplete: "Sequence Complete",
     sequenceCompleteAnnounce: "Sequence complete.",
     sequenceReset: "Sequence reset.",
-    sequenceReady: (n) => `Ready — ${n} steps. Click "Reveal Next" to begin.`,
+    sequenceReady: (n) => `Ready — ${n} steps. Press "Play" or "Reveal Next" to begin.`,
+    sequencePlaying: "Sequence playing.",
+    sequencePaused: "Sequence paused.",
+    noSequenceSteps: "No sequence steps were found for this illustration.",
     langEnglish: "English",
     langSpanish: "Español",
     langSwitched: "Switched to English.",
@@ -528,7 +536,10 @@ const UI_STRINGS = {
     sequenceComplete: "Secuencia completa",
     sequenceCompleteAnnounce: "Secuencia completa.",
     sequenceReset: "Secuencia reiniciada.",
-    sequenceReady: (n) => `Listo — ${n} pasos. Haz clic en "Mostrar siguiente" para comenzar.`,
+    sequenceReady: (n) => `Listo — ${n} pasos. Pulsa "Reproducir" o "Mostrar siguiente" para comenzar.`,
+    sequencePlaying: "Secuencia en reproducción.",
+    sequencePaused: "Secuencia en pausa.",
+    noSequenceSteps: "No se encontraron pasos de secuencia para esta ilustración.",
     langEnglish: "English",
     langSpanish: "Español",
     langSwitched: "Cambiado a español.",
@@ -553,6 +564,8 @@ const state = {
   isReducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
   // Sequence Builder State
   sequenceSteps: [],
+  isSequencePlaying: false,
+  sequenceTimer: null,
   // Language Toggle State
   isSwitchingLanguage: false
 };
@@ -708,6 +721,7 @@ async function initInteractiveApp() {
   try {
     const configData = await fetchWithCache(`${APPS_SCRIPT_URL}?diagram=${diagramId}&lang=${lang}`, apiKey);
     state.config = configData;
+    initLanguageToggle(state.config.languages);
     applyDiagramMeta(state.config.meta);
     renderActiveMode(toolbarContainer);
     announceStatus("Activity data loaded and ready.");
@@ -754,14 +768,24 @@ async function setLanguage(newLang) {
   }
 }
 
-function initLanguageToggle() {
+const LANGUAGE_OPTIONS = [
+  { code: "en", label: () => UI_STRINGS.en.langEnglish },
+  { code: "es", label: () => UI_STRINGS.es.langSpanish }
+];
+
+// Shows a button per language the Sheet actually has content for (the API's
+// `languages` list), and hides the toggle entirely when there's only one —
+// e.g. a diagram with no Spanish labels or title gets no EN/ES buttons.
+function initLanguageToggle(availableLanguages) {
   const host = document.getElementById("lang-toggle");
   if (!host) return;
 
-  [
-    { code: "en", label: () => UI_STRINGS.en.langEnglish },
-    { code: "es", label: () => UI_STRINGS.es.langSpanish }
-  ].forEach(({ code, label }) => {
+  host.innerHTML = "";
+  const options = LANGUAGE_OPTIONS.filter(({ code }) => (availableLanguages || []).includes(code));
+  host.hidden = options.length < 2;
+  if (host.hidden) return;
+
+  options.forEach(({ code, label }) => {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.textContent = label();
@@ -1077,8 +1101,11 @@ function clearSvgEffects() {
 }
 
 // TEMPLATE 3: Sequence Builder — reveals SVG layers one at a time, in a
-// fixed order, advancing only on explicit button click (no autoplay timer),
-// and stopping for good once the last step has been revealed.
+// fixed order. Viewers can step manually with "Reveal Next" or press Play to
+// auto-advance using each step's Sheet-authored `delay_ms`; either way it
+// stops for good once the last step has been revealed.
+const DEFAULT_SEQUENCE_DELAY_MS = 3000;
+
 function initSequenceBuilder(container) {
   const rows = (state.config && state.config.sequences) || [
     { item_id: "seq-1", element_id: "Label_Right_atrium", order: 1, caption: "Deoxygenated blood enters the Right Atrium." },
@@ -1087,22 +1114,15 @@ function initSequenceBuilder(container) {
     { item_id: "seq-4", element_id: "Label_Left_atrium", order: 4, caption: "Oxygenated blood returns to the Left Atrium via the Pulmonary Veins." }
   ];
 
-  // Accept either `element_id` (matches the `animations` tab convention) or
-  // a bare `item_id` for sheets that reuse it as the SVG id, and sort by
-  // `order`/`expected_order` since Sheet rows aren't guaranteed pre-sorted.
-  const sequence = rows
-    .map((row, i) => ({
-      elementId: row.element_id || row.item_id,
-      order: Number(row.order || row.expected_order) || i + 1,
-      caption: row.caption || row.label || ""
-    }))
-    .sort((a, b) => a.order - b.order);
+  const sequence = toSequenceSteps(rows);
 
+  stopSequenceTimer();
+  state.isSequencePlaying = false;
   state.sequenceSteps = sequence;
   state.currentStepIndex = -1; // nothing revealed yet
 
-  // Hide every target layer up front so "Reveal Next" builds the
-  // illustration up in order rather than starting fully visible.
+  // Hide every target layer up front so the illustration builds up in order
+  // rather than starting fully visible.
   sequence.forEach((step) => {
     const el = document.getElementById(step.elementId);
     if (el) el.classList.add("is-hidden");
@@ -1111,6 +1131,7 @@ function initSequenceBuilder(container) {
   const controlsDiv = document.createElement("div");
   controlsDiv.className = "playback-controls";
   controlsDiv.innerHTML = `
+    <button type="button" id="btn-sequence-play">${t("play")}</button>
     <button type="button" id="btn-reveal-next">${t("revealNext")}</button>
     <button type="button" id="btn-sequence-restart">${t("restart")}</button>
     <label style="margin-left:12px; cursor:pointer;">
@@ -1122,27 +1143,76 @@ function initSequenceBuilder(container) {
   captionBox.className = "caption-box";
   captionBox.id = "sequence-caption";
   captionBox.setAttribute("aria-live", "polite");
-  captionBox.textContent = t("sequenceReady")(sequence.length);
 
   container.appendChild(controlsDiv);
   container.appendChild(captionBox);
 
-  const btnNext = document.getElementById("btn-reveal-next");
+  const controls = {
+    btnPlay: document.getElementById("btn-sequence-play"),
+    btnNext: document.getElementById("btn-reveal-next"),
+    captionBox
+  };
   const btnRestart = document.getElementById("btn-sequence-restart");
   const chkMotion = document.getElementById("chk-reduced-motion-seq");
+
+  // An empty `sequences` result means no Sheet rows matched this diagram —
+  // say so instead of leaving buttons that silently do nothing.
+  if (sequence.length === 0) {
+    captionBox.textContent = t("noSequenceSteps");
+    controls.btnPlay.disabled = true;
+    controls.btnNext.disabled = true;
+    btnRestart.disabled = true;
+    return;
+  }
+
+  captionBox.textContent = t("sequenceReady")(sequence.length);
 
   chkMotion.addEventListener("change", (e) => {
     state.isReducedMotion = e.target.checked;
     announceStatus(state.isReducedMotion ? t("motionEnabled") : t("motionDisabled"));
   });
 
-  btnNext.addEventListener("click", () => revealNextInSequence(btnNext, captionBox));
-  btnRestart.addEventListener("click", () => restartSequence(btnNext, captionBox));
+  controls.btnPlay.addEventListener("click", () => toggleSequencePlayback(controls));
+  controls.btnNext.addEventListener("click", () => {
+    revealNextInSequence(controls);
+    if (state.isSequencePlaying) scheduleNextReveal(controls);
+  });
+  btnRestart.addEventListener("click", () => restartSequence(controls));
 }
 
-function revealNextInSequence(btnNext, captionBox) {
+// Normalizes Sheet rows into ordered steps. Accepts either `element_id`
+// (matches the `animations` tab convention) or a bare `item_id` for sheets
+// that reuse it as the SVG id, and sorts by `order`/`expected_order` since
+// Sheet rows aren't guaranteed pre-sorted.
+function toSequenceSteps(rows) {
+  return rows
+    .map((row, i) => ({
+      elementId: row.element_id || row.item_id,
+      order: Number(row.order || row.expected_order) || i + 1,
+      caption: row.caption || row.label || "",
+      delayMs: row.delay_ms
+    }))
+    .sort((a, b) => a.order - b.order)
+    .map((step, i) => ({ ...step, delayMs: resolveDelayMs(step.delayMs, i) }));
+}
+
+// Blank/invalid delay: start the first step right away, wait the default
+// between the rest.
+function resolveDelayMs(raw, index) {
+  const ms = Number(raw);
+  if (raw === "" || raw == null || !Number.isFinite(ms)) {
+    return index === 0 ? 0 : DEFAULT_SEQUENCE_DELAY_MS;
+  }
+  return Math.max(0, ms);
+}
+
+function isSequenceComplete() {
+  return state.currentStepIndex >= state.sequenceSteps.length - 1;
+}
+
+function revealNextInSequence(controls) {
   const sequence = state.sequenceSteps;
-  if (state.currentStepIndex >= sequence.length - 1) return; // already played through once
+  if (isSequenceComplete()) return; // already played through once
 
   state.currentStepIndex++;
   const step = sequence[state.currentStepIndex];
@@ -1158,17 +1228,55 @@ function revealNextInSequence(btnNext, captionBox) {
     }
   }
 
-  const stepLabel = `Step ${state.currentStepIndex + 1} of ${sequence.length}: ${step.caption}`;
-  captionBox.textContent = stepLabel;
+  controls.captionBox.textContent = `Step ${state.currentStepIndex + 1} of ${sequence.length}: ${step.caption}`;
 
-  if (state.currentStepIndex >= sequence.length - 1) {
-    btnNext.disabled = true;
-    btnNext.textContent = t("sequenceComplete");
+  if (isSequenceComplete()) {
+    stopSequenceTimer();
+    state.isSequencePlaying = false;
+    controls.btnPlay.textContent = t("play");
+    controls.btnPlay.disabled = true;
+    controls.btnNext.disabled = true;
+    controls.btnNext.textContent = t("sequenceComplete");
     announceStatus(t("sequenceCompleteAnnounce"));
   }
 }
 
-function restartSequence(btnNext, captionBox) {
+// Waits the upcoming step's `delay_ms`, reveals it, and chains to the next
+// until the sequence ends or playback is paused.
+function scheduleNextReveal(controls) {
+  stopSequenceTimer();
+  if (isSequenceComplete()) return;
+
+  const upcoming = state.sequenceSteps[state.currentStepIndex + 1];
+  state.sequenceTimer = setTimeout(() => {
+    revealNextInSequence(controls);
+    if (state.isSequencePlaying) scheduleNextReveal(controls);
+  }, upcoming.delayMs);
+}
+
+function toggleSequencePlayback(controls) {
+  if (state.isSequencePlaying) {
+    state.isSequencePlaying = false;
+    stopSequenceTimer();
+    controls.btnPlay.textContent = t("play");
+    announceStatus(t("sequencePaused"));
+  } else {
+    state.isSequencePlaying = true;
+    controls.btnPlay.textContent = t("pause");
+    announceStatus(t("sequencePlaying"));
+    scheduleNextReveal(controls);
+  }
+}
+
+function stopSequenceTimer() {
+  clearTimeout(state.sequenceTimer);
+  state.sequenceTimer = null;
+}
+
+function restartSequence(controls) {
+  stopSequenceTimer();
+  state.isSequencePlaying = false;
+
   state.sequenceSteps.forEach((step) => {
     const el = document.getElementById(step.elementId);
     if (el) {
@@ -1179,9 +1287,11 @@ function restartSequence(btnNext, captionBox) {
   });
 
   state.currentStepIndex = -1;
-  btnNext.disabled = false;
-  btnNext.textContent = t("revealNext");
-  captionBox.textContent = t("sequenceReady")(state.sequenceSteps.length);
+  controls.btnPlay.disabled = false;
+  controls.btnPlay.textContent = t("play");
+  controls.btnNext.disabled = false;
+  controls.btnNext.textContent = t("revealNext");
+  controls.captionBox.textContent = t("sequenceReady")(state.sequenceSteps.length);
   announceStatus(t("sequenceReset"));
 }
 
@@ -1194,7 +1304,6 @@ function announceStatus(message) {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-  initLanguageToggle();
   initInteractiveApp();
 });
 ```
@@ -1217,6 +1326,7 @@ function doGet(e) {
   // ----- 1) LABELS -----
   var labelSheet = ss.getSheetByName('labels');
   var labelRows = [];
+  var languages = { en: true }; // every diagram has English; others added when the Sheet has content for them
   if (labelSheet) {
     var values = labelSheet.getDataRange().getValues();
     if (values.length > 1) {
@@ -1232,12 +1342,22 @@ function doGet(e) {
       var langCol      = idx(lang + '_text'); // e.g. "es_text"
       var diagramCol   = idx('diagram_id');   // optional; if missing, all rows assumed for this diagram
 
-      labelRows = values
-        .filter(function (r) {
-          if (idCol === -1 || !r[idCol]) return false; // need svg_id
-          if (diagramCol === -1) return true;          // no diagram_id column yet -> include all
-          return String(r[diagramCol]).toLowerCase() === diagramId;
-        })
+      var diagramLabelRows = values.filter(function (r) {
+        if (idCol === -1 || !r[idCol]) return false; // need svg_id
+        if (diagramCol === -1) return true;          // no diagram_id column yet -> include all
+        return String(r[diagramCol]).toLowerCase() === diagramId;
+      });
+
+      // A "<code>_text" column (e.g. es_text) with any text for this diagram
+      // makes that language available in the page's language toggle.
+      header.forEach(function (name, col) {
+        var m = /^([a-z]{2})_text$/.exec(String(name));
+        if (!m) return;
+        var hasText = diagramLabelRows.some(function (r) { return String(r[col] || '').trim() !== ''; });
+        if (hasText) languages[m[1]] = true;
+      });
+
+      labelRows = diagramLabelRows
         .map(function (r) {
           var en = enCol !== -1 ? r[enCol] : '';
           var localized = (langCol !== -1 && r[langCol]) ? r[langCol] : en;
@@ -1270,6 +1390,14 @@ function doGet(e) {
       var langCol = midx('lang');
       var titleCol= midx('title');
       var descCol = midx('desc');
+
+      // A diagram_meta row in a language also makes that language available.
+      mValues.forEach(function (r) {
+        if (dIdCol === -1 || langCol === -1) return;
+        if (String(r[dIdCol]).toLowerCase() !== diagramId) return;
+        var rowLang = String(r[langCol]).toLowerCase().trim();
+        if (rowLang && (r[titleCol] || r[descCol])) languages[rowLang] = true;
+      });
 
       var row = mValues.find(function (r) {
         var idMatch = (dIdCol !== -1) && String(r[dIdCol]).toLowerCase() === diagramId;
@@ -1334,6 +1462,7 @@ function doGet(e) {
       var expOrderCol = sidx('expected_order');
       var sCaptionCol = sidx('caption');
       var feedbackCol = sidx('feedback');
+      var delayCol    = sidx('delay_ms');    // optional; ms to wait before this step appears during Play
 
       seqRows = sValues
         .filter(function (r) {
@@ -1346,7 +1475,9 @@ function doGet(e) {
             item_id: String(r[itemIdCol]),
             expected_order: expOrderCol !== -1 ? Number(r[expOrderCol]) || 1 : 1,
             caption: sCaptionCol !== -1 ? String(r[sCaptionCol]) : '',
-            feedback: feedbackCol !== -1 ? String(r[feedbackCol]) : ''
+            feedback: feedbackCol !== -1 ? String(r[feedbackCol]) : '',
+            // null when blank so the page applies its own default delay
+            delay_ms: (delayCol !== -1 && r[delayCol] !== '') ? Number(r[delayCol]) : null
           };
         });
     }
@@ -1356,7 +1487,8 @@ function doGet(e) {
     meta: meta,
     labels: labelRows,
     animations: animRows,
-    sequences: seqRows
+    sequences: seqRows,
+    languages: Object.keys(languages)
   };
 
   return ContentService
@@ -1489,7 +1621,7 @@ Note: this `doGet()` has no server-side `CacheService` layer (unlike an earlier 
 ## 6. Workflow
 
 ### Adding a new illustration
-1. Export from Illustrator per Section 4A's settings checklist (Internal CSS, keep text as SVG not outlines, Layer Names for Object IDs, Responsive on).
+1. Export from Illustrator via **File → Export → Export As… → SVG** (Styling: Internal CSS; Font: SVG for Label Studio diagrams, since label text is patched from the Sheet — Convert to Outlines is fine for sequence-builder/layer-explorer diagrams; Images: Embed; Object IDs: Layer Names; Minify off; Responsive on). Use a lowercase filename — `?diagram=` is lowercased before fetching.
 2. Drop the file in `assets/source/` — any number of SVGs can go here.
 3. Run `node tools/prepare-svg/index.js` — batch-processes every `.svg` in `assets/source/` into `assets/prepared/` + `assets/manifests/`, auto-repairing missing font fallbacks and flagging duplicate ids / missing viewBox / inline scripts along the way.
 4. Add Sheet rows for the new `diagram_id` across whichever of `labels` / `diagram_meta` / `animations` / `sequences` tabs the new illustration needs, using `svg_element_ids` (via the "List all element ids from SVG" menu item) to avoid id typos.

@@ -53,6 +53,10 @@
       margin-bottom: 0.75rem;
     }
 
+    .lang-toggle[hidden] {
+      display: none;
+    }
+
     .lang-toggle button {
       padding: 0.3rem 0.6rem;
       border-radius: 0.4rem;
@@ -164,7 +168,7 @@
   <div id="sr-status" aria-live="polite" class="sr-only"></div>
 
   <div class="diagram-wrap">
-    <div class="lang-toggle" role="group" aria-label="Language" id="lang-toggle"></div>
+    <div class="lang-toggle" role="group" aria-label="Language" id="lang-toggle" hidden></div>
 
     <header>
       <h1 id="diagram-title">Loading illustration…</h1>
