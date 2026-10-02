@@ -40,8 +40,36 @@ function ensureGenericFontFallback(svgContent, issues) {
   });
 }
 
+// Illustrator sometimes escapes characters in layer-name ids as _xHH_ (hex
+// char code), e.g. "Step1_P_wave" exports as "Step1_x5F_P_wave". The Sheet
+// references the layer names as typed, so decode these back — in ids and in
+// the url(#…)/href="#…" references that point at them. Only characters that
+// are safe in an id are decoded; anything else is left escaped.
+function decodeIllustratorIds(svgContent, issues) {
+  const decode = (value) => value.replace(/_x([0-9A-F]{2})_/g, (escaped, hex) => {
+    const char = String.fromCharCode(parseInt(hex, 16));
+    return /[\w.-]/.test(char) ? char : escaped;
+  });
+
+  const decodedIds = new Set();
+  const decodeRef = (match, prefix, value, suffix) => {
+    const decoded = decode(value);
+    if (decoded !== value) decodedIds.add(`${value} -> ${decoded}`);
+    return `${prefix}${decoded}${suffix}`;
+  };
+
+  const result = svgContent
+    .replace(/(\bid=")([^"]+)(")/g, decodeRef)
+    .replace(/(url\(#)([^)]+)(\))/g, decodeRef)
+    .replace(/(href="#)([^"]+)(")/g, decodeRef);
+
+  decodedIds.forEach((pair) => issues.push(`INFO: Decoded Illustrator id escape: ${pair}`));
+  return result;
+}
+
 function cleanAndOptimizeSvg(svgContent, assetId) {
   const issues = [];
+  svgContent = decodeIllustratorIds(svgContent, issues);
 
   // 1. Check and preserve viewBox
   const viewBoxMatch = svgContent.match(/viewBox="([^"]+)"/i);

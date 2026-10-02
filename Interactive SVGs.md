@@ -80,7 +80,7 @@ Used by two Apps Script menu functions (Section 4D):
 
 ### A. SVG Optimizer (`tools/prepare-svg/index.js`)
 
-Strips editor cruft, validates `viewBox`, flags inline `<script>`/duplicate-id/external-resource risks, and — importantly — **auto-repairs missing generic font-family fallbacks**. Illustrator exports name an exact (often subsetted/licensed) font with no generic fallback; when that exact font isn't installed in a visitor's browser, the browser silently falls through to its own default font (serif, in most browsers) regardless of what the artwork intended. `ensureGenericFontFallback()` detects any `font-family` rule missing a generic keyword and appends a matching one (`serif`/`sans-serif`/`monospace`, inferred from the named font), so a missing exact font degrades to something that still resembles the original design.
+Strips editor cruft, validates `viewBox`, flags inline `<script>`/duplicate-id/external-resource risks, and — importantly — **auto-repairs missing generic font-family fallbacks**. Illustrator exports name an exact (often subsetted/licensed) font with no generic fallback; when that exact font isn't installed in a visitor's browser, the browser silently falls through to its own default font (serif, in most browsers) regardless of what the artwork intended. `ensureGenericFontFallback()` detects any `font-family` rule missing a generic keyword and appends a matching one (`serif`/`sans-serif`/`monospace`, inferred from the named font), so a missing exact font degrades to something that still resembles the original design. It also runs `decodeIllustratorIds()` first: some Illustrator exports escape characters in layer-name ids as `_xHH_` (e.g. `Step1_P_wave` → `Step1_x5F_P_wave`), which would no longer match the ids typed in the Sheet, so these are decoded back (in ids and in `url(#…)`/`href="#…"` references) and each one is reported as an INFO diagnostic.
 
 ```javascript
 const fs = require('fs');
@@ -125,8 +125,36 @@ function ensureGenericFontFallback(svgContent, issues) {
   });
 }
 
+// Illustrator sometimes escapes characters in layer-name ids as _xHH_ (hex
+// char code), e.g. "Step1_P_wave" exports as "Step1_x5F_P_wave". The Sheet
+// references the layer names as typed, so decode these back — in ids and in
+// the url(#…)/href="#…" references that point at them. Only characters that
+// are safe in an id are decoded; anything else is left escaped.
+function decodeIllustratorIds(svgContent, issues) {
+  const decode = (value) => value.replace(/_x([0-9A-F]{2})_/g, (escaped, hex) => {
+    const char = String.fromCharCode(parseInt(hex, 16));
+    return /[\w.-]/.test(char) ? char : escaped;
+  });
+
+  const decodedIds = new Set();
+  const decodeRef = (match, prefix, value, suffix) => {
+    const decoded = decode(value);
+    if (decoded !== value) decodedIds.add(`${value} -> ${decoded}`);
+    return `${prefix}${decoded}${suffix}`;
+  };
+
+  const result = svgContent
+    .replace(/(\bid=")([^"]+)(")/g, decodeRef)
+    .replace(/(url\(#)([^)]+)(\))/g, decodeRef)
+    .replace(/(href="#)([^"]+)(")/g, decodeRef);
+
+  decodedIds.forEach((pair) => issues.push(`INFO: Decoded Illustrator id escape: ${pair}`));
+  return result;
+}
+
 function cleanAndOptimizeSvg(svgContent, assetId) {
   const issues = [];
+  svgContent = decodeIllustratorIds(svgContent, issues);
 
   // 1. Check and preserve viewBox
   const viewBoxMatch = svgContent.match(/viewBox="([^"]+)"/i);
@@ -229,7 +257,7 @@ function processAllSvgs() {
 
     console.log(` Saved optimized SVG to: assets/prepared/${assetId}.svg`);
     console.log(` Saved element manifest to: assets/manifests/${assetId}.json`);
-
+    
     if (issues.length > 0) {
       console.log(' Diagnostics:');
       issues.forEach(i => console.log(`   - ${i}`));
