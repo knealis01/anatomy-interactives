@@ -184,6 +184,17 @@ function injectAnimationStyles() {
       margin-top: 12px;
       font-size: 1.05rem;
     }
+    .sequence-caption-box {
+      flex: 1 0 100%;
+      box-sizing: border-box;
+      display: grid;
+    }
+    .sequence-caption-box > * {
+      grid-area: 1 / 1;
+    }
+    .caption-sizer {
+      visibility: hidden;
+    }
   `;
   document.head.appendChild(style);
 }
@@ -642,6 +653,7 @@ function clearSvgEffects() {
 // auto-advance using each step's Sheet-authored `delay_ms`; either way it
 // stops for good once the last step has been revealed.
 const DEFAULT_SEQUENCE_DELAY_MS = 3000;
+const SEQUENCE_FADE_MS = 600;
 
 function initSequenceBuilder(container) {
   const rows = (state.config && state.config.sequences) || [
@@ -676,33 +688,35 @@ function initSequenceBuilder(container) {
     </label>
   `;
 
-  const captionBox = document.createElement("div");
-  captionBox.className = "caption-box";
-  captionBox.id = "sequence-caption";
-  captionBox.setAttribute("aria-live", "polite");
+  const captionBox = buildSequenceCaptionBox(sequence);
 
   container.appendChild(controlsDiv);
-  container.appendChild(captionBox);
+  container.appendChild(captionBox.box);
 
   const controls = {
     btnPlay: document.getElementById("btn-sequence-play"),
     btnNext: document.getElementById("btn-reveal-next"),
-    captionBox
+    captionBox: captionBox.live
   };
   const btnRestart = document.getElementById("btn-sequence-restart");
   const chkMotion = document.getElementById("chk-reduced-motion-seq");
 
+  // Buttons swap labels (Play/Pause, Reveal Next/Sequence Complete); pin each
+  // to its widest label so the row never re-wraps and shifts the illustration.
+  reserveButtonWidth(controls.btnPlay, [t("play"), t("pause")]);
+  reserveButtonWidth(controls.btnNext, [t("revealNext"), t("sequenceComplete")]);
+
   // An empty `sequences` result means no Sheet rows matched this diagram —
   // say so instead of leaving buttons that silently do nothing.
   if (sequence.length === 0) {
-    captionBox.textContent = t("noSequenceSteps");
+    controls.captionBox.textContent = t("noSequenceSteps");
     controls.btnPlay.disabled = true;
     controls.btnNext.disabled = true;
     btnRestart.disabled = true;
     return;
   }
 
-  captionBox.textContent = t("sequenceReady")(sequence.length);
+  controls.captionBox.textContent = t("sequenceReady")(sequence.length);
 
   chkMotion.addEventListener("change", (e) => {
     state.isReducedMotion = e.target.checked;
@@ -714,7 +728,50 @@ function initSequenceBuilder(container) {
     revealNextInSequence(controls);
     if (state.isSequencePlaying) scheduleNextReveal(controls);
   });
-  btnRestart.addEventListener("click", () => restartSequence(controls));
+  btnRestart.addEventListener("click", () => restartSequence(controls, btnRestart));
+}
+
+function reserveButtonWidth(button, labels) {
+  const original = button.textContent;
+  const widest = Math.max(...labels.map((label) => {
+    button.textContent = label;
+    return button.getBoundingClientRect().width;
+  }));
+  button.textContent = original;
+  button.style.minWidth = `${Math.ceil(widest)}px`;
+}
+
+function sequenceStepCaption(index, total, caption) {
+  return `Step ${index + 1} of ${total}: ${caption}`;
+}
+
+// Full-width caption row whose height is fixed at its tallest possible text:
+// every caption is stacked invisibly in the same grid cell, so swapping the
+// visible one never changes the row's height and the illustration below
+// never shifts between steps.
+function buildSequenceCaptionBox(sequence) {
+  const box = document.createElement("div");
+  box.className = "caption-box sequence-caption-box";
+
+  const possibleTexts = [
+    t("sequenceReady")(sequence.length),
+    t("noSequenceSteps"),
+    ...sequence.map((step, i) => sequenceStepCaption(i, sequence.length, step.caption))
+  ];
+  possibleTexts.forEach((text) => {
+    const sizer = document.createElement("span");
+    sizer.className = "caption-sizer";
+    sizer.setAttribute("aria-hidden", "true");
+    sizer.textContent = text;
+    box.appendChild(sizer);
+  });
+
+  const live = document.createElement("span");
+  live.id = "sequence-caption";
+  live.setAttribute("aria-live", "polite");
+  box.appendChild(live);
+
+  return { box, live };
 }
 
 // Normalizes Sheet rows into ordered steps. Accepts either `element_id`
@@ -757,15 +814,15 @@ function revealNextInSequence(controls) {
 
   if (el) {
     el.classList.remove("is-hidden");
-    if (!state.isReducedMotion) {
-      el.style.setProperty("--anim-duration", "600ms");
-      el.style.opacity = "0";
-      el.classList.add("svg-fade-transition");
-      requestAnimationFrame(() => { el.style.opacity = "1"; });
+    if (!state.isReducedMotion && el.animate) {
+      // Web Animations rather than a CSS transition: a transition can't start
+      // on an element that was display:none in the same frame, so the layer
+      // would just pop in.
+      el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: SEQUENCE_FADE_MS, easing: "ease-in-out" });
     }
   }
 
-  controls.captionBox.textContent = `Step ${state.currentStepIndex + 1} of ${sequence.length}: ${step.caption}`;
+  controls.captionBox.textContent = sequenceStepCaption(state.currentStepIndex, sequence.length, step.caption);
 
   if (isSequenceComplete()) {
     stopSequenceTimer();
@@ -810,16 +867,27 @@ function stopSequenceTimer() {
   state.sequenceTimer = null;
 }
 
-function restartSequence(controls) {
+async function restartSequence(controls, btnRestart) {
   stopSequenceTimer();
   state.isSequencePlaying = false;
+
+  const revealed = state.sequenceSteps
+    .slice(0, state.currentStepIndex + 1)
+    .map((step) => document.getElementById(step.elementId))
+    .filter(Boolean);
+
+  // Lock the controls while revealed layers fade out together, so a click
+  // mid-fade can't reveal a layer that's about to be hidden.
+  const buttons = [controls.btnPlay, controls.btnNext, btnRestart];
+  buttons.forEach((btn) => { btn.disabled = true; });
+  await fadeOutLayers(revealed);
+  btnRestart.disabled = false;
 
   state.sequenceSteps.forEach((step) => {
     const el = document.getElementById(step.elementId);
     if (el) {
+      if (el.getAnimations) el.getAnimations().forEach((anim) => anim.cancel());
       el.classList.add("is-hidden");
-      el.classList.remove("svg-fade-transition");
-      el.style.opacity = "";
     }
   });
 
@@ -830,6 +898,24 @@ function restartSequence(controls) {
   controls.btnNext.textContent = t("revealNext");
   controls.captionBox.textContent = t("sequenceReady")(state.sequenceSteps.length);
   announceStatus(t("sequenceReset"));
+}
+
+// Resolves once every element has faded to transparent (immediately under
+// Reduce Motion or without Web Animations support). Callers hide the
+// elements afterwards; `fill: "forwards"` keeps them transparent until then.
+function fadeOutLayers(elements) {
+  if (state.isReducedMotion || elements.length === 0 || !elements[0].animate) {
+    return Promise.resolve();
+  }
+  const fades = elements.map((el) => {
+    if (el.getAnimations) el.getAnimations().forEach((anim) => anim.cancel());
+    return el.animate([{ opacity: 1 }, { opacity: 0 }], {
+      duration: SEQUENCE_FADE_MS,
+      easing: "ease-in-out",
+      fill: "forwards"
+    }).finished.catch(() => {}); // a cancelled fade (e.g. language switch mid-fade) still settles
+  });
+  return Promise.all(fades);
 }
 
 // 6. Utility: Screen Reader Announcements
