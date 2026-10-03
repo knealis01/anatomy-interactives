@@ -38,7 +38,7 @@ Every tab is filtered by `diagram_id` (e.g. `heart`) so one Sheet can drive mult
 | `svg_id` | must exactly match an SVG element id, e.g. `Label_Aorta` |
 | `en_text` | English caption |
 | `es_text` | Spanish caption (falls back to `en_text` if blank) |
-| `visible_default` | `TRUE`/`FALSE` |
+| `visible_default` | `TRUE`/`FALSE` — the label's visibility on open. A paired `Highlight_*` glow always starts off, regardless of this (see Section 4C) |
 | `tooltip_en` | optional hover/aria tooltip |
 | `text_align` | optional; `right` for labels whose leader line sits to their right — see Section 4C, `patchLabelText()` |
 
@@ -503,7 +503,7 @@ Note on the `.load-error:not([hidden])` rule: a plain `.load-error { display: fl
 ### C. Interaction Engine (`app.js`)
 
 Three activity modes, chosen via `?mode=`:
-- **`label-studio`** (default) — per-label show/hide toggle buttons, built from live `[id^="Label_"]` elements in the SVG, patched with Sheet-provided text/tooltip/visibility. Includes a "Toggle All" button.
+- **`label-studio`** (default) — per-label show/hide toggle buttons, built from live `[id^="Label_"]` elements in the SVG, patched with Sheet-provided text/tooltip/visibility. Includes a "Toggle All" button. If the SVG also has a `Highlight_*` layer whose name matches a label (case-insensitive, e.g. `Label_Intestine` ↔ `Highlight_intestine`), that label's button instead toggles a yellow glow on the highlight layer — all glows start off, the label stays as `visible_default` set it, and "Toggle All" affects labels only. Highlight layers can be drawn as unfilled, unstroked shapes; the glow (`[id^="Highlight_"].svg-highlight`) gives them a translucent yellow fill and stroke. The same yellow `.svg-highlight` glow is used by the `layer-explorer` `highlight` action.
 - **`layer-explorer`** — Play/Pause/Prev/Next scrubber through `animations` tab steps, each step running a `highlight`/`pulse`/`fade-in` action on one SVG element. Supports Reduce Motion.
 - **`sequence-builder`** — one-pass reveal through `sequences` tab steps: every target layer starts hidden. **Play/Pause** auto-advances, waiting each step's `delay_ms` before revealing it; **Reveal Next** reveals the next step immediately (and, while playing, restarts the wait for the one after). It stops for good (Play and Reveal Next disable) once the last step is revealed; Restart is the only way back to the start. Each revealed layer fades in over 600 ms, and Restart fades all revealed layers out together over 600 ms with the controls locked meanwhile (both skipped under Reduce Motion), and the caption row and buttons are sized to their largest possible content up front, so the illustration never shifts position between steps. If the Sheet returns no rows for the diagram, the caption says so and the buttons are disabled.
 
@@ -538,6 +538,8 @@ const UI_STRINGS = {
     labelHidden: (name) => `${name} label hidden.`,
     allShown: "All labels shown.",
     allHidden: "All labels hidden.",
+    highlightOn: (name) => `${name} highlighted.`,
+    highlightOff: (name) => `${name} highlight removed.`,
     reduceMotion: "Reduce Motion",
     motionEnabled: "Reduced motion enabled.",
     motionDisabled: "Reduced motion disabled.",
@@ -570,6 +572,8 @@ const UI_STRINGS = {
     labelHidden: (name) => `Etiqueta ${name} ocultada.`,
     allShown: "Todas las etiquetas mostradas.",
     allHidden: "Todas las etiquetas ocultadas.",
+    highlightOn: (name) => `${name} resaltado.`,
+    highlightOff: (name) => `Resaltado de ${name} quitado.`,
     reduceMotion: "Reducir movimiento",
     motionEnabled: "Movimiento reducido activado.",
     motionDisabled: "Movimiento reducido desactivado.",
@@ -660,9 +664,19 @@ function injectAnimationStyles() {
   style.id = "svg-engine-styles";
   style.textContent = `
     .svg-highlight {
-      outline: 3px solid #005fcc !important;
-      filter: drop-shadow(0px 0px 8px rgba(0, 95, 204, 0.8));
+      outline: 3px solid #ffd400 !important;
+      filter: drop-shadow(0px 0px 8px rgba(255, 212, 0, 0.9));
       transition: filter 0.3s ease, stroke 0.3s ease;
+    }
+    /* Highlight_* layers are drawn as unfilled, unstroked shapes, which a
+       drop-shadow alone can't make visible — give them a soft yellow body. */
+    [id^="Highlight_"].svg-highlight {
+      outline: none !important;
+    }
+    [id^="Highlight_"].svg-highlight * {
+      fill: rgba(255, 212, 0, 0.35);
+      stroke: #ffd400;
+      stroke-width: 1.5px;
     }
     .svg-pulse {
       animation: svgPulseKeyframe 1.2s infinite ease-in-out;
@@ -922,6 +936,13 @@ function initLabelStudio(container) {
     [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
   }
 
+  const highlightsByName = indexHighlightLayers(svg);
+  const highlightFor = (labelEl) => highlightsByName[layerKey(labelEl.id, "Label_")];
+  Object.values(highlightsByName).forEach((h) => {
+    h.classList.add("svg-highlight");
+    h.classList.add("is-hidden");
+  });
+
   const buttons = [];
 
   shuffled.forEach((el) => {
@@ -931,11 +952,15 @@ function initLabelStudio(container) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "toggle-btn";
-    button.dataset.target = el.id;
-    button.setAttribute("aria-controls", el.id);
+    // With a paired Highlight_* layer the button toggles that glow and leaves
+    // the label as visible_default set it; otherwise it toggles the label.
+    const highlight = highlightFor(el);
+    const target = highlight || el;
+    button.dataset.target = target.id;
+    button.setAttribute("aria-controls", target.id);
 
     const isVisible = info ? info.visible !== false : !el.classList.contains("is-hidden");
-    button.setAttribute("aria-pressed", isVisible ? "true" : "false");
+    button.setAttribute("aria-pressed", !highlight && isVisible ? "true" : "false");
     button.textContent = info && info.text ? info.text.replace(/\r?\n/g, " ") : fallbackName;
 
     // Measure/patch text before toggling visibility — getBBox() (used for
@@ -948,13 +973,16 @@ function initLabelStudio(container) {
     }
 
     button.addEventListener("click", () => {
-      const hidden = el.classList.toggle("is-hidden");
+      const hidden = target.classList.toggle("is-hidden");
       button.setAttribute("aria-pressed", hidden ? "false" : "true");
-      announceStatus(hidden ? t("labelHidden")(button.textContent) : t("labelShown")(button.textContent));
+      const name = button.textContent;
+      if (highlight) announceStatus(hidden ? t("highlightOff")(name) : t("highlightOn")(name));
+      else announceStatus(hidden ? t("labelHidden")(name) : t("labelShown")(name));
     });
 
     container.appendChild(button);
-    buttons.push(button);
+    // Only label-toggling buttons mirror "Toggle All"; glow buttons don't.
+    if (!highlight) buttons.push(button);
   });
 
   const allButton = document.createElement("button");
@@ -970,6 +998,21 @@ function initLabelStudio(container) {
     announceStatus(anyVisible ? t("allHidden") : t("allShown"));
   });
   container.appendChild(allButton);
+}
+
+// Lowercased layer name with its prefix removed, so `Label_Intestine` and
+// `Highlight_intestine` resolve to the same key despite differing case.
+function layerKey(id, prefix) {
+  return id.slice(prefix.length).toLowerCase();
+}
+
+// Maps each Highlight_* layer by its layerKey, for pairing with Label_* groups.
+function indexHighlightLayers(svg) {
+  const byName = {};
+  svg.querySelectorAll('[id^="Highlight_"]').forEach((el) => {
+    byName[layerKey(el.id, "Highlight_")] = el;
+  });
+  return byName;
 }
 
 // Replaces a label group's <text> content with Sheet-provided text, wrapping
