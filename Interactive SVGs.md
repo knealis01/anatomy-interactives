@@ -31,14 +31,14 @@ anatomy-interactives/
 
 Every tab is filtered by `diagram_id` (e.g. `heart`) so one Sheet can drive multiple illustrations.
 
-### `labels` tab — Label Studio (show/hide + text)
+### `labels` tab — Label Studio & Label Quiz (show/hide + text)
 | Column | Notes |
 |---|---|
 | `diagram_id` | e.g. `heart` |
 | `svg_id` | must exactly match an SVG element id, e.g. `Label_Aorta` |
 | `en_text` | English caption |
 | `es_text` | Spanish caption (falls back to `en_text` if blank) |
-| `visible_default` | `TRUE`/`FALSE` — the label's visibility on open. A paired `Highlight_*` glow always starts off, regardless of this (see Section 4C) |
+| `visible_default` | `TRUE`/`FALSE` — the label's visibility on open. A paired `Highlight_*` glow always starts off, regardless of this (see Section 4C). Ignored by `label-quiz`, where every paired label starts hidden |
 | `tooltip_en` | optional hover/aria tooltip |
 | `text_align` | optional; `right` for labels whose leader line sits to their right — see Section 4C, `patchLabelText()` |
 
@@ -502,15 +502,22 @@ Note on the `.load-error:not([hidden])` rule: a plain `.load-error { display: fl
 
 ### C. Interaction Engine (`app.js`)
 
-Three activity modes, chosen via `?mode=`:
-- **`label-studio`** (default) — per-label show/hide toggle buttons, built from live `[id^="Label_"]` elements in the SVG, patched with Sheet-provided text/tooltip/visibility. Includes a "Toggle All" button. If the SVG also has a `Highlight_*` layer whose name matches a label (case-insensitive, e.g. `Label_Intestine` ↔ `Highlight_intestine`), that label's button instead toggles a yellow glow on the highlight layer — all glows start off, the label stays as `visible_default` set it, and "Toggle All" affects labels only. Highlight layers can be drawn as unfilled, unstroked shapes; the glow (`[id^="Highlight_"].svg-highlight`) gives them a translucent yellow fill and stroke. The same yellow `.svg-highlight` glow is used by the `layer-explorer` `highlight` action.
+Four activity modes, chosen via `?mode=`:
+- **`label-studio`** (default) — per-label show/hide toggle buttons, built from live `[id^="Label_"]` elements in the SVG, patched with Sheet-provided text/tooltip/visibility. Includes a "Toggle All" button. If the SVG also has a `Highlight_*` layer whose name matches a label (case-insensitive, e.g. `Label_Intestine` ↔ `Highlight_intestine`), that label's button instead toggles a blue glow on the highlight layer — all glows start off, the label stays as `visible_default` set it, and "Toggle All" affects labels only. Highlight layers can be drawn as unfilled, unstroked shapes; the glow (`[id^="Highlight_"].svg-highlight`) gives them a translucent blue fill and stroke. The same blue `.svg-highlight` glow is used by the `layer-explorer` `highlight` action.
+- **`label-quiz`** — a find-the-structure game built from the same `Label_*` ↔ `Highlight_*` pairing. Only paired labels take part; an unpaired label gets no button, is left as-is, and is logged as a console warning (so a layer-name typo shows up there). The language toggle is hidden in this mode, since a toolbar rebuild would lose the round; UI text still follows `?lang=`.
+  - **Before a round:** all paired labels hidden, no glow, label buttons and **Reveal** locked — only **Start** and **Toggle All** are usable. Feedback: "Press Start to begin."
+  - **Start** hides every label, deselects every button, and makes a random unanswered shape glow and pulse (steady under **Reduce Motion**). Pressing it again starts a new round.
+  - **A wrong label button** shows "Try again." and changes nothing else. **The right one** shows "Correct!", reveals that label, selects and locks its button, and moves the glow to the next shape. **Reveal** does the same for the current shape with "This is the <name>." Answered buttons ignore further clicks.
+  - **After the last shape:** "All structures identified!" and the buttons lock again.
+  - **Toggle All** shows/hides all paired labels; mid-round it also ends the round ("Activity stopped. Press Start for a new round."), so Start is the only way back in.
+  - Locked buttons use `aria-disabled` rather than `disabled`, so the button just pressed keeps keyboard focus when it locks. Feedback is a `role="status"` live region, cleared before each update so repeated "Try again." messages are re-announced. No scoring.
 - **`layer-explorer`** — Play/Pause/Prev/Next scrubber through `animations` tab steps, each step running a `highlight`/`pulse`/`fade-in` action on one SVG element. Supports Reduce Motion.
 - **`sequence-builder`** — one-pass reveal through `sequences` tab steps: every target layer starts hidden. **Play/Pause** auto-advances, waiting each step's `delay_ms` before revealing it; **Reveal Next** reveals the next step immediately (and, while playing, restarts the wait for the one after). It stops for good (Play and Reveal Next disable) once the last step is revealed; Restart is the only way back to the start. Each revealed layer fades in over 600 ms, and Restart fades all revealed layers out together over 600 ms with the controls locked meanwhile (both skipped under Reduce Motion), and the caption row and buttons are sized to their largest possible content up front, so the illustration never shifts position between steps. If the Sheet returns no rows for the diagram, the caption says so and the buttons are disabled.
 
 ```javascript
 /**
  * Interactive SVG Course Engine & Activity Toolkit
- * Activity Modes: Label Studio, Animated Layer Explorer, Process Sequence Builder
+ * Activity Modes: Label Studio, Label Quiz, Animated Layer Explorer, Process Sequence Builder
  * Performance: Stale-While-Revalidate Browser Caching (localStorage)
  * Standards Target: WCAG 2.2 Level AA Accessibility
  */
@@ -520,7 +527,7 @@ const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzUJqCg1olF5dEW
 
 const urlParams = new URLSearchParams(window.location.search);
 const diagramId = (urlParams.get("diagram") || "heart").toLowerCase();
-const activeMode = (urlParams.get("mode") || "label-studio").toLowerCase(); // 'label-studio' | 'layer-explorer' | 'sequence-builder'
+const activeMode = (urlParams.get("mode") || "label-studio").toLowerCase(); // 'label-studio' | 'label-quiz' | 'layer-explorer' | 'sequence-builder'
 let lang = (urlParams.get("lang") || "en").toLowerCase(); // mutable — the language toggle reassigns this
 
 // Fixed UI chrome text (buttons, instructions, banners) isn't Sheet-authored
@@ -540,6 +547,15 @@ const UI_STRINGS = {
     allHidden: "All labels hidden.",
     highlightOn: (name) => `${name} highlighted.`,
     highlightOff: (name) => `${name} highlight removed.`,
+    quizStart: "Start",
+    quizReveal: "Reveal",
+    quizIntro: "Press Start to begin.",
+    quizPrompt: "Which structure is glowing? Select its label.",
+    quizCorrect: "Correct!",
+    quizTryAgain: "Try again.",
+    quizRevealed: (name) => `This is the ${name}.`,
+    quizComplete: "All structures identified!",
+    quizStopped: "Activity stopped. Press Start for a new round.",
     reduceMotion: "Reduce Motion",
     motionEnabled: "Reduced motion enabled.",
     motionDisabled: "Reduced motion disabled.",
@@ -574,6 +590,15 @@ const UI_STRINGS = {
     allHidden: "Todas las etiquetas ocultadas.",
     highlightOn: (name) => `${name} resaltado.`,
     highlightOff: (name) => `Resaltado de ${name} quitado.`,
+    quizStart: "Comenzar",
+    quizReveal: "Revelar",
+    quizIntro: "Pulsa Comenzar para empezar.",
+    quizPrompt: "¿Qué estructura brilla? Selecciona su etiqueta.",
+    quizCorrect: "¡Correcto!",
+    quizTryAgain: "Inténtalo de nuevo.",
+    quizRevealed: (name) => `Esta estructura es: ${name}.`,
+    quizComplete: "¡Todas las estructuras identificadas!",
+    quizStopped: "Actividad detenida. Pulsa Comenzar para una nueva ronda.",
     reduceMotion: "Reducir movimiento",
     motionEnabled: "Movimiento reducido activado.",
     motionDisabled: "Movimiento reducido desactivado.",
@@ -664,19 +689,33 @@ function injectAnimationStyles() {
   style.id = "svg-engine-styles";
   style.textContent = `
     .svg-highlight {
-      outline: 3px solid #ffd400 !important;
-      filter: drop-shadow(0px 0px 8px rgba(255, 212, 0, 0.9));
+      outline: 3px solid #005fcc !important;
+      filter: drop-shadow(0px 0px 8px rgba(0, 95, 204, 0.8));
       transition: filter 0.3s ease, stroke 0.3s ease;
     }
     /* Highlight_* layers are drawn as unfilled, unstroked shapes, which a
-       drop-shadow alone can't make visible — give them a soft yellow body. */
+       drop-shadow alone can't make visible — give them a soft blue body. */
     [id^="Highlight_"].svg-highlight {
       outline: none !important;
     }
     [id^="Highlight_"].svg-highlight * {
-      fill: rgba(255, 212, 0, 0.35);
-      stroke: #ffd400;
+      fill: rgba(0, 95, 204, 0.3);
+      stroke: #005fcc;
       stroke-width: 1.5px;
+    }
+    /* Opacity-only pulse: a transform scale would shift small SVG shapes
+       away from their position, since SVG groups scale from the origin. */
+    .quiz-pulse {
+      animation: quizPulseKeyframe 1.2s infinite ease-in-out;
+    }
+    @keyframes quizPulseKeyframe {
+      50% { opacity: 0.35; }
+    }
+    .toggles button[aria-disabled="true"] {
+      cursor: default;
+    }
+    .toggles button[aria-disabled="true"]:not([aria-pressed="true"]) {
+      opacity: 0.35;
     }
     .svg-pulse {
       animation: svgPulseKeyframe 1.2s infinite ease-in-out;
@@ -752,6 +791,9 @@ function renderActiveMode(container) {
     case "layer-explorer":
       initLayerExplorer(container);
       break;
+    case "label-quiz":
+      initLabelQuiz(container);
+      break;
     case "label-studio":
     default:
       initLabelStudio(container);
@@ -793,7 +835,8 @@ async function initInteractiveApp() {
   try {
     const configData = await fetchWithCache(`${APPS_SCRIPT_URL}?diagram=${diagramId}&lang=${lang}`, apiKey);
     state.config = configData;
-    initLanguageToggle(state.config.languages);
+    // Label Quiz rounds don't survive a toolbar rebuild, so it offers no language switch.
+    initLanguageToggle(activeMode === "label-quiz" ? [] : state.config.languages);
     applyDiagramMeta(state.config.meta);
     renderActiveMode(toolbarContainer);
     announceStatus("Activity data loaded and ready.");
@@ -922,19 +965,11 @@ function initLabelStudio(container) {
     return;
   }
 
-  // Index Sheet-provided label data (text, tooltip, default visibility) by svg id.
-  const dataById = {};
-  ((state.config && state.config.labels) || []).forEach((item) => {
-    if (item.id) dataById[item.id] = item;
-  });
+  const dataById = indexLabelData();
 
   // Build buttons in randomized order so the toolbar doubles as a light
   // "name the structure" quiz rather than mirroring the SVG's draw order.
-  const shuffled = [...labelEls];
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-  }
+  const shuffled = shuffle(labelEls);
 
   const highlightsByName = indexHighlightLayers(svg);
   const highlightFor = (labelEl) => highlightsByName[layerKey(labelEl.id, "Label_")];
@@ -947,7 +982,6 @@ function initLabelStudio(container) {
 
   shuffled.forEach((el) => {
     const info = dataById[el.id];
-    const fallbackName = el.id.replace(/^Label_/, "").replace(/_/g, " ");
 
     const button = document.createElement("button");
     button.type = "button";
@@ -961,7 +995,7 @@ function initLabelStudio(container) {
 
     const isVisible = info ? info.visible !== false : !el.classList.contains("is-hidden");
     button.setAttribute("aria-pressed", !highlight && isVisible ? "true" : "false");
-    button.textContent = info && info.text ? info.text.replace(/\r?\n/g, " ") : fallbackName;
+    button.textContent = labelName(el, info);
 
     // Measure/patch text before toggling visibility — getBBox() (used for
     // right-aligned labels below) returns a zeroed box on a hidden element.
@@ -1013,6 +1047,216 @@ function indexHighlightLayers(svg) {
     byName[layerKey(el.id, "Highlight_")] = el;
   });
   return byName;
+}
+
+// Sheet-provided label data (text, tooltip, default visibility) keyed by svg id.
+function indexLabelData() {
+  const dataById = {};
+  ((state.config && state.config.labels) || []).forEach((item) => {
+    if (item.id) dataById[item.id] = item;
+  });
+  return dataById;
+}
+
+// Button text for a label: the Sheet's text on one line, else the id itself.
+function labelName(labelEl, info) {
+  if (info && info.text) return info.text.replace(/\r?\n/g, " ");
+  return labelEl.id.replace(/^Label_/, "").replace(/_/g, " ");
+}
+
+// Returns a shuffled copy (Fisher–Yates).
+function shuffle(items) {
+  const out = [...items];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
+// TEMPLATE 4: Label Quiz — a random Highlight_* shape glows and the student
+// picks its label button; a wrong pick keeps the glow, a right one (or
+// Reveal) shows the label and moves to the next shape. Only Label_* groups
+// with a paired Highlight_* layer take part; unpaired labels are left alone.
+function initLabelQuiz(container) {
+  const pairs = buildQuizPairs(state.svgElement);
+  if (pairs.length === 0) {
+    container.innerHTML = "<span>No Label_* groups with a matching Highlight_* layer found in this illustration.</span>";
+    return;
+  }
+
+  const quiz = {
+    pairs,
+    remaining: [],
+    current: null,
+    btnStart: makeQuizButton(t("quizStart")),
+    btnReveal: makeQuizButton(t("quizReveal")),
+    btnAll: makeQuizButton(t("toggleAll")),
+    feedback: document.createElement("div")
+  };
+  quiz.btnAll.id = "toggle-all";
+  quiz.btnAll.setAttribute("aria-pressed", "false");
+  quiz.feedback.className = "caption-box";
+  quiz.feedback.style.cssText = "flex: 1 0 100%; box-sizing: border-box; margin-top: 4px;";
+  quiz.feedback.setAttribute("role", "status");
+  quiz.feedback.setAttribute("aria-live", "polite");
+
+  shuffle(pairs).forEach((pair) => {
+    pair.button = makeQuizButton(pair.name);
+    pair.button.classList.add("toggle-btn");
+    pair.button.setAttribute("aria-controls", pair.label.id);
+    pair.button.addEventListener("click", () => answerQuiz(quiz, pair));
+    container.appendChild(pair.button);
+  });
+
+  const motionLabel = document.createElement("label");
+  motionLabel.style.cssText = "display:inline-flex; align-items:center; gap:4px; cursor:pointer;";
+  motionLabel.innerHTML = `<input type="checkbox" id="chk-reduced-motion" ${state.isReducedMotion ? "checked" : ""}> ${t("reduceMotion")}`;
+  motionLabel.querySelector("input").addEventListener("change", (e) => {
+    state.isReducedMotion = e.target.checked;
+    if (quiz.current) setQuizGlow(quiz.current, true);
+    announceStatus(state.isReducedMotion ? t("motionEnabled") : t("motionDisabled"));
+  });
+
+  quiz.btnStart.addEventListener("click", () => startQuizRound(quiz));
+  quiz.btnReveal.addEventListener("click", () => revealQuizAnswer(quiz));
+  quiz.btnAll.addEventListener("click", () => toggleAllQuizLabels(quiz));
+
+  container.append(quiz.btnStart, quiz.btnReveal, quiz.btnAll, motionLabel, quiz.feedback);
+
+  pairs.forEach((pair) => {
+    pair.label.classList.add("is-hidden");
+    pair.button.setAttribute("aria-pressed", "false");
+  });
+  lockQuiz(quiz);
+  setQuizFeedback(quiz, t("quizIntro"));
+}
+
+// Pairs each Label_* group with its Highlight_* layer. Labels are patched
+// with Sheet text here, while still visible (patchLabelText needs getBBox).
+// Every Highlight_* layer is set up as a hidden glow, paired or not.
+function buildQuizPairs(svg) {
+  if (!svg) return [];
+  const dataById = indexLabelData();
+  const highlights = indexHighlightLayers(svg);
+  Object.values(highlights).forEach((h) => h.classList.add("svg-highlight", "is-hidden"));
+
+  const pairs = [];
+  svg.querySelectorAll('[id^="Label_"]').forEach((label) => {
+    const highlight = highlights[layerKey(label.id, "Label_")];
+    if (!highlight) {
+      console.warn(`label-quiz: ${label.id} has no matching Highlight_* layer; left out of the quiz.`);
+      return;
+    }
+    const info = dataById[label.id];
+    patchLabelText(label, info);
+    pairs.push({ label, highlight, name: labelName(label, info) });
+  });
+  return pairs;
+}
+
+function makeQuizButton(text) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = text;
+  return button;
+}
+
+function startQuizRound(quiz) {
+  if (quiz.current) setQuizGlow(quiz.current, false);
+  quiz.pairs.forEach((pair) => {
+    pair.label.classList.add("is-hidden");
+    pair.button.setAttribute("aria-pressed", "false");
+    setQuizButtonEnabled(pair.button, true);
+  });
+  quiz.btnAll.setAttribute("aria-pressed", "false");
+  setQuizButtonEnabled(quiz.btnReveal, true);
+  quiz.remaining = shuffle(quiz.pairs);
+  quiz.current = null;
+  advanceQuiz(quiz);
+  setQuizFeedback(quiz, t("quizPrompt"));
+}
+
+function answerQuiz(quiz, pair) {
+  if (!quiz.current || !isQuizButtonEnabled(pair.button)) return;
+  if (pair !== quiz.current) {
+    setQuizFeedback(quiz, t("quizTryAgain"));
+    return;
+  }
+  completeQuizItem(quiz, t("quizCorrect"));
+}
+
+function revealQuizAnswer(quiz) {
+  if (!quiz.current) return;
+  completeQuizItem(quiz, t("quizRevealed")(quiz.current.name));
+}
+
+// Shows the current item's label, selects its button, and moves on —
+// announcing `message`, or the round-complete message after the last item.
+function completeQuizItem(quiz, message) {
+  const pair = quiz.current;
+  setQuizGlow(pair, false);
+  pair.label.classList.remove("is-hidden");
+  pair.button.setAttribute("aria-pressed", "true");
+  setQuizButtonEnabled(pair.button, false);
+
+  advanceQuiz(quiz);
+  if (quiz.current) {
+    setQuizFeedback(quiz, message);
+  } else {
+    lockQuiz(quiz);
+    setQuizFeedback(quiz, t("quizComplete"));
+  }
+}
+
+function advanceQuiz(quiz) {
+  quiz.current = quiz.remaining.pop() || null;
+  if (quiz.current) setQuizGlow(quiz.current, true);
+}
+
+// Toggle All doubles as "exit": it ends any round in progress, and Start
+// is then the only way back in.
+function toggleAllQuizLabels(quiz) {
+  if (quiz.current) {
+    setQuizGlow(quiz.current, false);
+    quiz.current = null;
+    lockQuiz(quiz);
+    setQuizFeedback(quiz, t("quizStopped"));
+  }
+  const anyVisible = quiz.pairs.some((pair) => !pair.label.classList.contains("is-hidden"));
+  quiz.pairs.forEach((pair) => {
+    pair.label.classList.toggle("is-hidden", anyVisible);
+    pair.button.setAttribute("aria-pressed", anyVisible ? "false" : "true");
+  });
+  quiz.btnAll.setAttribute("aria-pressed", anyVisible ? "false" : "true");
+  announceStatus(anyVisible ? t("allHidden") : t("allShown"));
+}
+
+// Between rounds only Start and Toggle All are usable.
+function lockQuiz(quiz) {
+  quiz.pairs.forEach((pair) => setQuizButtonEnabled(pair.button, false));
+  setQuizButtonEnabled(quiz.btnReveal, false);
+}
+
+// aria-disabled rather than `disabled`, so a button that locks itself
+// (the right answer, or Reveal at round end) keeps keyboard focus.
+function setQuizButtonEnabled(button, enabled) {
+  button.setAttribute("aria-disabled", enabled ? "false" : "true");
+}
+
+function isQuizButtonEnabled(button) {
+  return button.getAttribute("aria-disabled") !== "true";
+}
+
+function setQuizGlow(pair, on) {
+  pair.highlight.classList.toggle("is-hidden", !on);
+  pair.highlight.classList.toggle("quiz-pulse", on && !state.isReducedMotion);
+}
+
+// Cleared first so a repeated message (e.g. "Try again.") is re-announced.
+function setQuizFeedback(quiz, message) {
+  quiz.feedback.textContent = "";
+  setTimeout(() => { quiz.feedback.textContent = message; }, 50);
 }
 
 // Replaces a label group's <text> content with Sheet-provided text, wrapping
@@ -1797,6 +2041,7 @@ Note: this `doGet()` has no server-side `CacheService` layer (unlike an earlier 
 - **No title → header stays "Loading illustration…".** `applyDiagramMeta()` only replaces the placeholder when the Sheet supplies a title, so a diagram without a `diagram_meta` row looks stuck on loading.
 - **`localStorage` quota isn't handled.** `fetchWithCache()` stores each prepared SVG uncompressed (the EKG is ~1.7 MB) and an initial-load `setItem` that exceeds the ~5 MB per-origin quota throws, surfacing as "Failed to load illustration asset" even though the fetch succeeded. Note that all `<user>.github.io` project sites share one origin. Wrapping the write in `try/catch` would fix it if more large diagrams are added.
 - **The manifest's `elements` list only covers `Label_`/`structure-`/`layer-` ids**, so sequence diagrams using other names (e.g. `Step1_…`) get an empty list. Nothing at runtime reads the manifest.
+- **`label-quiz` is visual-only.** The target is identified solely by its glow, so a screen-reader user can't tell which structure to name, and announcing it would give the answer away. A non-visual alternative (e.g. per-structure hint text from the Sheet) is planned if the demo is developed further; until then, point screen-reader users to `label-studio`.
 
 ## 6. Workflow
 
