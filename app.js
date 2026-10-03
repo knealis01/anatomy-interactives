@@ -28,6 +28,8 @@ const UI_STRINGS = {
     labelHidden: (name) => `${name} label hidden.`,
     allShown: "All labels shown.",
     allHidden: "All labels hidden.",
+    highlightOn: (name) => `${name} highlighted.`,
+    highlightOff: (name) => `${name} highlight removed.`,
     reduceMotion: "Reduce Motion",
     motionEnabled: "Reduced motion enabled.",
     motionDisabled: "Reduced motion disabled.",
@@ -60,6 +62,8 @@ const UI_STRINGS = {
     labelHidden: (name) => `Etiqueta ${name} ocultada.`,
     allShown: "Todas las etiquetas mostradas.",
     allHidden: "Todas las etiquetas ocultadas.",
+    highlightOn: (name) => `${name} resaltado.`,
+    highlightOff: (name) => `Resaltado de ${name} quitado.`,
     reduceMotion: "Reducir movimiento",
     motionEnabled: "Movimiento reducido activado.",
     motionDisabled: "Movimiento reducido desactivado.",
@@ -150,9 +154,19 @@ function injectAnimationStyles() {
   style.id = "svg-engine-styles";
   style.textContent = `
     .svg-highlight {
-      outline: 3px solid #005fcc !important;
-      filter: drop-shadow(0px 0px 8px rgba(0, 95, 204, 0.8));
+      outline: 3px solid #ffd400 !important;
+      filter: drop-shadow(0px 0px 8px rgba(255, 212, 0, 0.9));
       transition: filter 0.3s ease, stroke 0.3s ease;
+    }
+    /* Highlight_* layers are drawn as unfilled, unstroked shapes, which a
+       drop-shadow alone can't make visible — give them a soft yellow body. */
+    [id^="Highlight_"].svg-highlight {
+      outline: none !important;
+    }
+    [id^="Highlight_"].svg-highlight * {
+      fill: rgba(255, 212, 0, 0.35);
+      stroke: #ffd400;
+      stroke-width: 1.5px;
     }
     .svg-pulse {
       animation: svgPulseKeyframe 1.2s infinite ease-in-out;
@@ -412,6 +426,13 @@ function initLabelStudio(container) {
     [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
   }
 
+  const highlightsByName = indexHighlightLayers(svg);
+  const highlightFor = (labelEl) => highlightsByName[layerKey(labelEl.id, "Label_")];
+  Object.values(highlightsByName).forEach((h) => {
+    h.classList.add("svg-highlight");
+    h.classList.add("is-hidden");
+  });
+
   const buttons = [];
 
   shuffled.forEach((el) => {
@@ -421,11 +442,15 @@ function initLabelStudio(container) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "toggle-btn";
-    button.dataset.target = el.id;
-    button.setAttribute("aria-controls", el.id);
+    // With a paired Highlight_* layer the button toggles that glow and leaves
+    // the label as visible_default set it; otherwise it toggles the label.
+    const highlight = highlightFor(el);
+    const target = highlight || el;
+    button.dataset.target = target.id;
+    button.setAttribute("aria-controls", target.id);
 
     const isVisible = info ? info.visible !== false : !el.classList.contains("is-hidden");
-    button.setAttribute("aria-pressed", isVisible ? "true" : "false");
+    button.setAttribute("aria-pressed", !highlight && isVisible ? "true" : "false");
     button.textContent = info && info.text ? info.text.replace(/\r?\n/g, " ") : fallbackName;
 
     // Measure/patch text before toggling visibility — getBBox() (used for
@@ -438,13 +463,16 @@ function initLabelStudio(container) {
     }
 
     button.addEventListener("click", () => {
-      const hidden = el.classList.toggle("is-hidden");
+      const hidden = target.classList.toggle("is-hidden");
       button.setAttribute("aria-pressed", hidden ? "false" : "true");
-      announceStatus(hidden ? t("labelHidden")(button.textContent) : t("labelShown")(button.textContent));
+      const name = button.textContent;
+      if (highlight) announceStatus(hidden ? t("highlightOff")(name) : t("highlightOn")(name));
+      else announceStatus(hidden ? t("labelHidden")(name) : t("labelShown")(name));
     });
 
     container.appendChild(button);
-    buttons.push(button);
+    // Only label-toggling buttons mirror "Toggle All"; glow buttons don't.
+    if (!highlight) buttons.push(button);
   });
 
   const allButton = document.createElement("button");
@@ -460,6 +488,21 @@ function initLabelStudio(container) {
     announceStatus(anyVisible ? t("allHidden") : t("allShown"));
   });
   container.appendChild(allButton);
+}
+
+// Lowercased layer name with its prefix removed, so `Label_Intestine` and
+// `Highlight_intestine` resolve to the same key despite differing case.
+function layerKey(id, prefix) {
+  return id.slice(prefix.length).toLowerCase();
+}
+
+// Maps each Highlight_* layer by its layerKey, for pairing with Label_* groups.
+function indexHighlightLayers(svg) {
+  const byName = {};
+  svg.querySelectorAll('[id^="Highlight_"]').forEach((el) => {
+    byName[layerKey(el.id, "Highlight_")] = el;
+  });
+  return byName;
 }
 
 // Replaces a label group's <text> content with Sheet-provided text, wrapping
