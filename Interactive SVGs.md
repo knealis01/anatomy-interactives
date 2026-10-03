@@ -510,7 +510,7 @@ Four activity modes, chosen via `?mode=`:
   - **A wrong label button** shows "Try again." and changes nothing else. **The right one** shows "Correct!", reveals that label, selects and locks its button, and moves the glow to the next shape. **Reveal** does the same for the current shape with "This is the <name>." Answered buttons ignore further clicks.
   - **After the last shape:** "All structures identified!" and the buttons lock again.
   - **Toggle All** shows/hides all paired labels; mid-round it also ends the round ("Activity stopped. Press Start for a new round."), so Start is the only way back in.
-  - Locked buttons use `aria-disabled` rather than `disabled`, so the button just pressed keeps keyboard focus when it locks. Feedback is a `role="status"` live region, cleared before each update so repeated "Try again." messages are re-announced. No scoring.
+  - Locked buttons use `aria-disabled` rather than `disabled`, so the button just pressed keeps keyboard focus when it locks. Feedback is a `role="status"` live region, cleared before each update so repeated "Try again." messages are re-announced. No scoring. Nothing in the toolbar changes size during play, so the illustration never shifts: the feedback box is pre-sized to its longest message (`buildSizedCaptionBox()`, shared with `sequence-builder`), and label/Toggle All buttons in both label modes reserve their bold width (`setButtonLabel()`).
 - **`layer-explorer`** — Play/Pause/Prev/Next scrubber through `animations` tab steps, each step running a `highlight`/`pulse`/`fade-in` action on one SVG element. Supports Reduce Motion.
 - **`sequence-builder`** — one-pass reveal through `sequences` tab steps: every target layer starts hidden. **Play/Pause** auto-advances, waiting each step's `delay_ms` before revealing it; **Reveal Next** reveals the next step immediately (and, while playing, restarts the wait for the one after). It stops for good (Play and Reveal Next disable) once the last step is revealed; Restart is the only way back to the start. Each revealed layer fades in over 600 ms, and Restart fades all revealed layers out together over 600 ms with the controls locked meanwhile (both skipped under Reduce Motion), and the caption row and buttons are sized to their largest possible content up front, so the illustration never shifts position between steps. If the Sheet returns no rows for the diagram, the caption says so and the buttons are disabled.
 
@@ -747,15 +747,27 @@ function injectAnimationStyles() {
       margin-top: 12px;
       font-size: 1.05rem;
     }
-    .sequence-caption-box {
+    .sized-caption-box {
       flex: 1 0 100%;
       box-sizing: border-box;
       display: grid;
     }
-    .sequence-caption-box > * {
+    .sized-caption-box > * {
       grid-area: 1 / 1;
     }
     .caption-sizer {
+      visibility: hidden;
+    }
+    .bold-stable {
+      display: inline-grid;
+      justify-items: center;
+      align-items: center;
+    }
+    .bold-stable > span {
+      grid-area: 1 / 1;
+    }
+    .bold-sizer {
+      font-weight: 600;
       visibility: hidden;
     }
   `;
@@ -995,7 +1007,8 @@ function initLabelStudio(container) {
 
     const isVisible = info ? info.visible !== false : !el.classList.contains("is-hidden");
     button.setAttribute("aria-pressed", !highlight && isVisible ? "true" : "false");
-    button.textContent = labelName(el, info);
+    const name = labelName(el, info);
+    setButtonLabel(button, name);
 
     // Measure/patch text before toggling visibility — getBBox() (used for
     // right-aligned labels below) returns a zeroed box on a hidden element.
@@ -1009,7 +1022,6 @@ function initLabelStudio(container) {
     button.addEventListener("click", () => {
       const hidden = target.classList.toggle("is-hidden");
       button.setAttribute("aria-pressed", hidden ? "false" : "true");
-      const name = button.textContent;
       if (highlight) announceStatus(hidden ? t("highlightOff")(name) : t("highlightOn")(name));
       else announceStatus(hidden ? t("labelHidden")(name) : t("labelShown")(name));
     });
@@ -1022,7 +1034,7 @@ function initLabelStudio(container) {
   const allButton = document.createElement("button");
   allButton.type = "button";
   allButton.id = "toggle-all";
-  allButton.textContent = t("toggleAll");
+  setButtonLabel(allButton, t("toggleAll"));
   allButton.setAttribute("aria-pressed", "false");
   allButton.addEventListener("click", () => {
     const anyVisible = labelEls.some((el) => !el.classList.contains("is-hidden"));
@@ -1092,14 +1104,18 @@ function initLabelQuiz(container) {
     btnStart: makeQuizButton(t("quizStart")),
     btnReveal: makeQuizButton(t("quizReveal")),
     btnAll: makeQuizButton(t("toggleAll")),
-    feedback: document.createElement("div")
+    feedback: null
   };
   quiz.btnAll.id = "toggle-all";
   quiz.btnAll.setAttribute("aria-pressed", "false");
-  quiz.feedback.className = "caption-box";
-  quiz.feedback.style.cssText = "flex: 1 0 100%; box-sizing: border-box; margin-top: 4px;";
+  const feedbackBox = buildSizedCaptionBox("quiz-feedback", [
+    t("quizIntro"), t("quizPrompt"), t("quizCorrect"), t("quizTryAgain"),
+    t("quizComplete"), t("quizStopped"),
+    ...pairs.map((pair) => t("quizRevealed")(pair.name))
+  ]);
+  feedbackBox.box.style.marginTop = "4px";
+  quiz.feedback = feedbackBox.live;
   quiz.feedback.setAttribute("role", "status");
-  quiz.feedback.setAttribute("aria-live", "polite");
 
   shuffle(pairs).forEach((pair) => {
     pair.button = makeQuizButton(pair.name);
@@ -1122,7 +1138,7 @@ function initLabelQuiz(container) {
   quiz.btnReveal.addEventListener("click", () => revealQuizAnswer(quiz));
   quiz.btnAll.addEventListener("click", () => toggleAllQuizLabels(quiz));
 
-  container.append(quiz.btnStart, quiz.btnReveal, quiz.btnAll, motionLabel, quiz.feedback);
+  container.append(quiz.btnStart, quiz.btnReveal, quiz.btnAll, motionLabel, feedbackBox.box);
 
   pairs.forEach((pair) => {
     pair.label.classList.add("is-hidden");
@@ -1158,8 +1174,23 @@ function buildQuizPairs(svg) {
 function makeQuizButton(text) {
   const button = document.createElement("button");
   button.type = "button";
-  button.textContent = text;
+  setButtonLabel(button, text);
   return button;
+}
+
+// Fills a button with its text plus an invisible bold copy stacked in the
+// same grid cell, so it is always as wide as its bold (aria-pressed="true")
+// state and selecting it never reflows the toolbar. The copy is aria-hidden,
+// so the accessible name is still just `text`.
+function setButtonLabel(button, text) {
+  const visible = document.createElement("span");
+  visible.textContent = text;
+  const sizer = document.createElement("span");
+  sizer.className = "bold-sizer";
+  sizer.setAttribute("aria-hidden", "true");
+  sizer.textContent = text;
+  button.classList.add("bold-stable");
+  button.replaceChildren(visible, sizer);
 }
 
 function startQuizRound(quiz) {
@@ -1547,14 +1578,20 @@ function sequenceStepCaption(index, total, caption) {
 // visible one never changes the row's height and the illustration below
 // never shifts between steps.
 function buildSequenceCaptionBox(sequence) {
-  const box = document.createElement("div");
-  box.className = "caption-box sequence-caption-box";
-
-  const possibleTexts = [
+  return buildSizedCaptionBox("sequence-caption", [
     t("sequenceReady")(sequence.length),
     t("noSequenceSteps"),
     ...sequence.map((step, i) => sequenceStepCaption(i, sequence.length, step.caption))
-  ];
+  ]);
+}
+
+// A caption box sized up front to the tallest of `possibleTexts` (stacked
+// invisibly in one grid cell), so changing or clearing its live text never
+// changes its height and shifts the illustration below it.
+function buildSizedCaptionBox(liveId, possibleTexts) {
+  const box = document.createElement("div");
+  box.className = "caption-box sized-caption-box";
+
   possibleTexts.forEach((text) => {
     const sizer = document.createElement("span");
     sizer.className = "caption-sizer";
@@ -1564,7 +1601,7 @@ function buildSequenceCaptionBox(sequence) {
   });
 
   const live = document.createElement("span");
-  live.id = "sequence-caption";
+  live.id = liveId;
   live.setAttribute("aria-live", "polite");
   box.appendChild(live);
 

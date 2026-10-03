@@ -230,15 +230,27 @@ function injectAnimationStyles() {
       margin-top: 12px;
       font-size: 1.05rem;
     }
-    .sequence-caption-box {
+    .sized-caption-box {
       flex: 1 0 100%;
       box-sizing: border-box;
       display: grid;
     }
-    .sequence-caption-box > * {
+    .sized-caption-box > * {
       grid-area: 1 / 1;
     }
     .caption-sizer {
+      visibility: hidden;
+    }
+    .bold-stable {
+      display: inline-grid;
+      justify-items: center;
+      align-items: center;
+    }
+    .bold-stable > span {
+      grid-area: 1 / 1;
+    }
+    .bold-sizer {
+      font-weight: 600;
       visibility: hidden;
     }
   `;
@@ -478,7 +490,8 @@ function initLabelStudio(container) {
 
     const isVisible = info ? info.visible !== false : !el.classList.contains("is-hidden");
     button.setAttribute("aria-pressed", !highlight && isVisible ? "true" : "false");
-    button.textContent = labelName(el, info);
+    const name = labelName(el, info);
+    setButtonLabel(button, name);
 
     // Measure/patch text before toggling visibility — getBBox() (used for
     // right-aligned labels below) returns a zeroed box on a hidden element.
@@ -492,7 +505,6 @@ function initLabelStudio(container) {
     button.addEventListener("click", () => {
       const hidden = target.classList.toggle("is-hidden");
       button.setAttribute("aria-pressed", hidden ? "false" : "true");
-      const name = button.textContent;
       if (highlight) announceStatus(hidden ? t("highlightOff")(name) : t("highlightOn")(name));
       else announceStatus(hidden ? t("labelHidden")(name) : t("labelShown")(name));
     });
@@ -505,7 +517,7 @@ function initLabelStudio(container) {
   const allButton = document.createElement("button");
   allButton.type = "button";
   allButton.id = "toggle-all";
-  allButton.textContent = t("toggleAll");
+  setButtonLabel(allButton, t("toggleAll"));
   allButton.setAttribute("aria-pressed", "false");
   allButton.addEventListener("click", () => {
     const anyVisible = labelEls.some((el) => !el.classList.contains("is-hidden"));
@@ -575,14 +587,18 @@ function initLabelQuiz(container) {
     btnStart: makeQuizButton(t("quizStart")),
     btnReveal: makeQuizButton(t("quizReveal")),
     btnAll: makeQuizButton(t("toggleAll")),
-    feedback: document.createElement("div")
+    feedback: null
   };
   quiz.btnAll.id = "toggle-all";
   quiz.btnAll.setAttribute("aria-pressed", "false");
-  quiz.feedback.className = "caption-box";
-  quiz.feedback.style.cssText = "flex: 1 0 100%; box-sizing: border-box; margin-top: 4px;";
+  const feedbackBox = buildSizedCaptionBox("quiz-feedback", [
+    t("quizIntro"), t("quizPrompt"), t("quizCorrect"), t("quizTryAgain"),
+    t("quizComplete"), t("quizStopped"),
+    ...pairs.map((pair) => t("quizRevealed")(pair.name))
+  ]);
+  feedbackBox.box.style.marginTop = "4px";
+  quiz.feedback = feedbackBox.live;
   quiz.feedback.setAttribute("role", "status");
-  quiz.feedback.setAttribute("aria-live", "polite");
 
   shuffle(pairs).forEach((pair) => {
     pair.button = makeQuizButton(pair.name);
@@ -605,7 +621,7 @@ function initLabelQuiz(container) {
   quiz.btnReveal.addEventListener("click", () => revealQuizAnswer(quiz));
   quiz.btnAll.addEventListener("click", () => toggleAllQuizLabels(quiz));
 
-  container.append(quiz.btnStart, quiz.btnReveal, quiz.btnAll, motionLabel, quiz.feedback);
+  container.append(quiz.btnStart, quiz.btnReveal, quiz.btnAll, motionLabel, feedbackBox.box);
 
   pairs.forEach((pair) => {
     pair.label.classList.add("is-hidden");
@@ -641,8 +657,23 @@ function buildQuizPairs(svg) {
 function makeQuizButton(text) {
   const button = document.createElement("button");
   button.type = "button";
-  button.textContent = text;
+  setButtonLabel(button, text);
   return button;
+}
+
+// Fills a button with its text plus an invisible bold copy stacked in the
+// same grid cell, so it is always as wide as its bold (aria-pressed="true")
+// state and selecting it never reflows the toolbar. The copy is aria-hidden,
+// so the accessible name is still just `text`.
+function setButtonLabel(button, text) {
+  const visible = document.createElement("span");
+  visible.textContent = text;
+  const sizer = document.createElement("span");
+  sizer.className = "bold-sizer";
+  sizer.setAttribute("aria-hidden", "true");
+  sizer.textContent = text;
+  button.classList.add("bold-stable");
+  button.replaceChildren(visible, sizer);
 }
 
 function startQuizRound(quiz) {
@@ -1030,14 +1061,20 @@ function sequenceStepCaption(index, total, caption) {
 // visible one never changes the row's height and the illustration below
 // never shifts between steps.
 function buildSequenceCaptionBox(sequence) {
-  const box = document.createElement("div");
-  box.className = "caption-box sequence-caption-box";
-
-  const possibleTexts = [
+  return buildSizedCaptionBox("sequence-caption", [
     t("sequenceReady")(sequence.length),
     t("noSequenceSteps"),
     ...sequence.map((step, i) => sequenceStepCaption(i, sequence.length, step.caption))
-  ];
+  ]);
+}
+
+// A caption box sized up front to the tallest of `possibleTexts` (stacked
+// invisibly in one grid cell), so changing or clearing its live text never
+// changes its height and shifts the illustration below it.
+function buildSizedCaptionBox(liveId, possibleTexts) {
+  const box = document.createElement("div");
+  box.className = "caption-box sized-caption-box";
+
   possibleTexts.forEach((text) => {
     const sizer = document.createElement("span");
     sizer.className = "caption-sizer";
@@ -1047,7 +1084,7 @@ function buildSequenceCaptionBox(sequence) {
   });
 
   const live = document.createElement("span");
-  live.id = "sequence-caption";
+  live.id = liveId;
   live.setAttribute("aria-live", "polite");
   box.appendChild(live);
 
